@@ -33,20 +33,10 @@ fn C.libssh2_channel_window_write_ex(channel &C.LIBSSH2_CHANNEL, window_size_ini
 const stream_stdout = 0
 const stream_stderr = 1
 
-// ChannelType represents the type of channel.
-pub enum ChannelType {
-	session
-	direct_tcpip
-	direct_streamlocal
-	forwarded_tcpip
-	forwarded_streamlocal
-}
-
 // Channel represents an SSH channel for executing commands, starting shells, etc.
 pub struct Channel {
-	handle         voidptr     = unsafe { nil }
-	session_handle voidptr     = unsafe { nil }
-	channel_type   ChannelType = ChannelType.session
+	handle         voidptr = unsafe { nil }
+	session_handle voidptr = unsafe { nil }
 }
 
 // ------------------------------------------------------------------

@@ -23,17 +23,20 @@ fn C.libssh2_session_set_timeout(session &C.LIBSSH2_SESSION, timeout int)
 fn C.libssh2_keepalive_config(session &C.LIBSSH2_SESSION, want_reply int, interval int)
 fn C.libssh2_keepalive_send(session &C.LIBSSH2_SESSION, seconds_to_next &int) int
 
-// Method type constants
-const method_kex = 0
-const method_hostkey = 1
-const method_crypt_cs = 2
-const method_crypt_sc = 3
-const method_mac_cs = 4
-const method_mac_sc = 5
-const method_comp_cs = 6
-const method_comp_sc = 7
-const method_lang_cs = 8
-const method_lang_sc = 9
+// MethodType represents a type of negotiated SSH algorithm.
+// Used with `Session.method()` to query which algorithm was negotiated.
+pub enum MethodType {
+	kex
+	hostkey
+	crypt_cs
+	crypt_sc
+	mac_cs
+	mac_sc
+	comp_cs
+	comp_sc
+	lang_cs
+	lang_sc
+}
 
 // Session represents an SSH2 session.
 // It wraps a C LIBSSH2_SESSION pointer and handles its lifecycle.
@@ -153,12 +156,9 @@ pub fn (s &Session) set_banner(banner_text string) ! {
 	}
 }
 
-// method returns the negotiated method for the given type.
-// Type can be one of: 'kex', 'hostkey', 'crypt_cs', 'crypt_sc',
-// 'mac_cs', 'mac_sc', 'comp_cs', 'comp_sc', 'lang_cs', 'lang_sc'.
-pub fn (s &Session) method(method_type string) string {
-	mt := method_string_to_int(method_type)
-	ptr := C.libssh2_session_methods(s.handle, mt)
+// method returns the negotiated algorithm name for the given method type.
+pub fn (s &Session) method(method_type MethodType) string {
+	ptr := C.libssh2_session_methods(s.handle, int(method_type))
 	if unsafe { ptr == nil } {
 		return ''
 	}
@@ -195,22 +195,6 @@ pub fn (s &Session) last_error() (int, string) {
 // Internal helpers
 // ------------------------------------------------------------------
 
-fn method_string_to_int(method_type string) int {
-	return match method_type {
-		'kex' { method_kex }
-		'hostkey' { method_hostkey }
-		'crypt_cs' { method_crypt_cs }
-		'crypt_sc' { method_crypt_sc }
-		'mac_cs' { method_mac_cs }
-		'mac_sc' { method_mac_sc }
-		'comp_cs' { method_comp_cs }
-		'comp_sc' { method_comp_sc }
-		'lang_cs' { method_lang_cs }
-		'lang_sc' { method_lang_sc }
-		else { -1 }
-	}
-}
-
 // ssh2_error creates an IError from a libssh2 error code.
 fn ssh2_error(code int, s &Session) IError {
 	msg := if unsafe { s != nil && s.handle != nil } {
@@ -226,5 +210,3 @@ fn ssh2_error(code int, s &Session) IError {
 		message: msg
 	}
 }
-
-

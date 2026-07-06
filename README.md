@@ -16,9 +16,14 @@ A pure **V language** wrapper for the [libssh2](https://www.libssh2.org/) librar
 - ✅ **Non-blocking Mode** — Async I/O support
 - ✅ **Pure V API** — No C code needed by users, idiomatic V design
 
-## Requirements
+## Quick Setup
 
-You need **libssh2** installed on your system:
+```bash
+# Auto-detect your OS and install libssh2:
+v run setup.vsh
+```
+
+Or install manually:
 
 | OS | Command |
 |---|---|
@@ -31,12 +36,13 @@ You need **libssh2** installed on your system:
 ## Installation
 
 ```bash
-# Install via vpm
+# Via vpm:
 v install ssh2
 
-# Or use locally
+# Or clone locally:
 git clone <repo-url>
 cd ssh2
+v run setup.vsh   # installs libssh2 if missing
 v build .
 ```
 
@@ -48,9 +54,7 @@ v build .
 import ssh2
 
 fn main() {
-	ssh2.ssh_init() or { panic(err) }
-	defer { ssh2.ssh_exit() }
-
+	// libssh2 initializes automatically — no init/exit needed
 	session := ssh2.connect_to(ssh2.ConnectConfig{
 		host: 'example.com'
 		port: 22
@@ -71,9 +75,6 @@ fn main() {
 import ssh2
 
 fn main() {
-	ssh2.ssh_init() or { panic(err) }
-	defer { ssh2.ssh_exit() }
-
 	session := ssh2.connect_to(ssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
@@ -94,8 +95,7 @@ import ssh2
 import net
 
 fn main() {
-	ssh2.ssh_init() or { panic(err) }
-	defer { ssh2.ssh_exit() }
+	// libssh2 initializes automatically
 
 	// 1. Create session
 	session := ssh2.new_session() or { panic(err) }
@@ -132,9 +132,6 @@ fn main() {
 import ssh2
 
 fn main() {
-	ssh2.ssh_init() or { panic(err) }
-	defer { ssh2.ssh_exit() }
-
 	session := ssh2.connect_to(ssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
@@ -161,9 +158,6 @@ fn main() {
 import ssh2
 
 fn main() {
-	ssh2.ssh_init() or { panic(err) }
-	defer { ssh2.ssh_exit() }
-
 	session := ssh2.connect_to(ssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
@@ -193,8 +187,6 @@ fn main() {
 
 | Function / Method | Description |
 |---|---|
-| `ssh2.ssh_init()` | Initialize the libssh2 library |
-| `ssh2.ssh_exit()` | Shutdown the libssh2 library |
 | `ssh2.version()` | Get libssh2 version string |
 | `ssh2.new_session()` | Create a new SSH session |
 | `ssh2.connect_to(config)` | High-level connect & authenticate |

@@ -6,18 +6,8 @@ import os
 // Unit tests - these test the wrapper internals without a live server
 // ------------------------------------------------------------------
 
-fn test_library_init_and_exit() {
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	ssh_exit()
-	// Re-init to test multiple init/exit cycles
-	ssh_init() or { assert false, 'Failed to re-init: ${err}' }
-	ssh_exit()
-	assert true
-}
-
 fn test_version_not_empty() {
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
+	// libssh2 is auto-initialized by the module's init()
 	ver := version()
 	assert ver.len > 0
 	assert ver.contains('.') // should be something like "1.11.0"
@@ -31,22 +21,7 @@ fn test_socket_error_message() {
 	assert socket_error_message(999) == 'unknown error (999)'
 }
 
-fn test_new_session_fails_without_init() {
-	// init not called - session creation should fail because lib not initialized
-	// However, session_init itself doesn't call libssh2 - only connect() does
-	session := new_session() or {
-		// Expected to fail or succeed - either way is valid
-		return
-	}
-	// If we got a session, we should be able to close it
-	session.close()
-	assert true
-}
-
 fn test_session_blocking_mode() {
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
-
 	session := new_session() or { return }
 	defer { session.close() }
 
@@ -63,9 +38,6 @@ fn test_session_blocking_mode() {
 }
 
 fn test_session_timeout() {
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
-
 	session := new_session() or { return }
 	defer { session.close() }
 
@@ -109,11 +81,11 @@ fn test_sftp_attrs_conversion() {
 }
 
 fn test_sftp_open_flags() {
-	read_write := sftp_fx_read | sftp_fx_write
-	assert read_write == (u32(0x00000001) | u32(0x00000002))
+	read_write := sftp_open_flag_read | sftp_open_flag_write
+	assert read_write == (0x00000001 | 0x00000002)
 
-	create_trunc := sftp_fx_create | sftp_fx_truncate
-	assert create_trunc == (u32(0x00000010) | u32(0x00000020))
+	create_trunc := sftp_open_flag_create | sftp_open_flag_trunc
+	assert create_trunc == (0x00000010 | 0x00000020)
 }
 
 fn test_sftp_file_type_values() {
@@ -128,8 +100,9 @@ fn test_knownhost_check_result_values() {
 	assert KnownHostCheckResult.not_found.str() == 'not_found'
 }
 
-fn test_channel_type_values() {
-	assert ChannelType.session.str() == 'session'
+fn test_method_type_values() {
+	assert MethodType.kex.str() == 'kex'
+	assert MethodType.hostkey.str() == 'hostkey'
 }
 
 fn test_ssh2_error_struct() {
@@ -174,18 +147,13 @@ fn ssh_test_config() ?ConnectConfig {
 fn test_integration_connect_and_exec() {
 	config := ssh_test_config() or { return }
 
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
-
 	session := connect_to(config) or { return }
 	defer { session.close() }
 
 	assert session.is_authenticated()
 
 	// Test executing a simple command
-	stdout, stderr := session.exec_and_read('echo hello') or {
-		return
-	}
+	stdout, stderr := session.exec_and_read('echo hello') or { return }
 	assert stdout.contains('hello')
 	assert stderr == ''
 }
@@ -193,24 +161,16 @@ fn test_integration_connect_and_exec() {
 fn test_integration_auth_list() {
 	config := ssh_test_config() or { return }
 
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
-
 	session := connect_to(config) or { return }
 	defer { session.close() }
 
-	methods := session.auth_list(config.username) or {
-		return
-	}
+	methods := session.auth_list(config.username) or { return }
 	assert methods.len > 0
 	assert methods.contains(AuthMethod.password)
 }
 
 fn test_integration_sftp_file_ops() {
 	config := ssh_test_config() or { return }
-
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
 
 	session := connect_to(config) or { return }
 	defer { session.close() }
@@ -222,24 +182,17 @@ fn test_integration_sftp_file_ops() {
 	defer { sftp.close() }
 
 	// Test stat on home directory
-	attrs := sftp.stat('.') or {
-		return
-	}
+	attrs := sftp.stat('.') or { return }
 	assert attrs.flags & sftp_attr_permissions != 0 || attrs.flags & sftp_attr_size != 0
 
 	// Test realpath
-	real := sftp.realpath('.') or {
-		return
-	}
+	real := sftp.realpath('.') or { return }
 	assert real.len > 0
 	assert real.starts_with('/')
 }
 
 fn test_integration_sftp_write_and_read() {
 	config := ssh_test_config() or { return }
-
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
 
 	session := connect_to(config) or { return }
 	defer { session.close() }
@@ -254,13 +207,9 @@ fn test_integration_sftp_write_and_read() {
 	test_data := 'Hello from V SSH2 wrapper!'
 	test_path := '/tmp/v_ssh2_test.txt'
 
-	sftp.write_file(test_path, test_data.bytes()) or {
-		return
-	}
+	sftp.write_file(test_path, test_data.bytes()) or { return }
 
-	read_data := sftp.read_file(test_path) or {
-		return
-	}
+	read_data := sftp.read_file(test_path) or { return }
 	assert read_data.bytestr() == test_data
 
 	// Clean up
@@ -269,9 +218,6 @@ fn test_integration_sftp_write_and_read() {
 
 fn test_integration_sftp_mkdir_rmdir() {
 	config := ssh_test_config() or { return }
-
-	ssh_init() or { assert false, 'Failed to init: ${err}' }
-	defer { ssh_exit() }
 
 	session := connect_to(config) or { return }
 	defer { session.close() }

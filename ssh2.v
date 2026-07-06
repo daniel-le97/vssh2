@@ -6,11 +6,28 @@
 // to work with SSH connections, authentication, channels, and SFTP
 // without writing any C code.
 //
-// Prerequisites:
-//   - macOS: `brew install libssh2`
-//   - Ubuntu/Debian: `sudo apt-get install libssh2-1-dev`
-//   - Fedora: `sudo dnf install libssh2-devel`
-//   - Arch: `sudo pacman -S libssh2`
+// ## Prerequisites
+//
+// libssh2 must be installed on your system. Run the setup script to auto-install:
+//
+// ```bash
+// v run setup.vsh
+// ```
+//
+// Or install manually:
+//
+//   macOS:        brew install libssh2
+//   Ubuntu/Deb:   sudo apt-get install libssh2-1-dev
+//   Fedora:       sudo dnf install libssh2-devel
+//   Arch:         sudo pacman -S libssh2
+//   Alpine:       sudo apk add libssh2-dev
+//
+// ## Why not bundled?
+//
+// libssh2 is LGPL-licensed (your project is MIT), and it depends on OpenSSL for
+// crypto. Bundling it would create license obligations and still require users
+// to install OpenSSL. Instead, we use your system's package manager — one command
+// and you're set. See `setup.sh` for auto-detection.
 
 module ssh2
 
@@ -26,14 +43,19 @@ module ssh2
 // ------------------------------------------------------------------
 @[typedef]
 struct C.LIBSSH2_SESSION {}
+
 @[typedef]
 struct C.LIBSSH2_CHANNEL {}
+
 @[typedef]
 struct C.LIBSSH2_SFTP {}
+
 @[typedef]
 struct C.LIBSSH2_SFTP_HANDLE {}
+
 @[typedef]
 struct C.LIBSSH2_KNOWNHOSTS {}
+
 @[typedef]
 struct C.LIBSSH2_KNOWNHOST {}
 
@@ -42,8 +64,8 @@ struct C.LIBSSH2_KNOWNHOST {}
 const libssh2_version_string = 'libssh2'
 
 // Default buffer sizes
-const default_read_buffer_size = 32768
-const default_write_buffer_size = 4096
+pub const default_read_buffer_size = 32768
+pub const default_write_buffer_size = 4096
 
 // ------------------------------------------------------------------
 // C function declarations (referenced from libssh2)
@@ -65,8 +87,8 @@ fn C.libssh2_version(needed int) &char
 
 // Ssh2Error represents an error returned by the libssh2 library.
 pub struct Ssh2Error {
+	code int
 pub:
-	code    int
 	message string
 }
 
@@ -89,22 +111,19 @@ pub fn (e Ssh2Error) code() int {
 }
 
 // ------------------------------------------------------------------
-// Library initialization
+// Automatic library initialization
 // ------------------------------------------------------------------
+// V's `init()` runs automatically when the module is imported — no user
+// action needed. `deinit()` cleans up at program exit.
 
-// ssh_init initializes the libssh2 library. This must be called once before
-// any SSH2 operations. Call ssh_exit() when done.
-//
-// Returns an error if initialization fails.
-pub fn ssh_init() ! {
+fn init() {
 	rc := C.libssh2_init(0)
 	if rc != 0 {
-		return error('Failed to initialize libssh2 library (code: ${rc})')
+		panic('Failed to initialize libssh2 library (code: ${rc}). Is libssh2 installed? Run: v run setup.vsh')
 	}
 }
 
-// ssh_exit shuts down the libssh2 library. Call when done with all SSH operations.
-pub fn ssh_exit() {
+fn deinit() {
 	C.libssh2_exit()
 }
 

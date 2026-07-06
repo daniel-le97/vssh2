@@ -8,11 +8,9 @@ import os
 //
 // To run this example:
 //   SSH_HOST=example.com SSH_USER=user SSH_PASS=password v run .
+//
+// Note: libssh2 initializes automatically on import — no manual init/exit needed.
 fn main() {
-	// Initialize the libssh2 library
-	ssh2.ssh_init() or { panic(err) }
-	defer { ssh2.ssh_exit() }
-
 	println('Using libssh2 version: ${ssh2.version()}')
 
 	// Get connection details from environment (or use defaults for demo)

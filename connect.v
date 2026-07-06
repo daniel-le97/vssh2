@@ -37,9 +37,7 @@ pub:
 // import ssh2
 //
 // fn main() {
-//     ssh2.ssh_init() or { panic(err) }
-//     defer { ssh2.ssh_exit() }
-//
+//     // libssh2 initializes automatically on import
 //     session := ssh2.connect_to(ssh2.ConnectConfig{
 //         host: 'example.com'
 //         username: 'user'

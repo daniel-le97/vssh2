@@ -25,20 +25,23 @@ fn C.libssh2_sftp_fsetstat(handle &C.LIBSSH2_SFTP_HANDLE, st &C.LIBSSH2_SFTP_ATT
 fn C.libssh2_sftp_setstat(sftp &C.LIBSSH2_SFTP, filename &char, filename_len int, st &C.LIBSSH2_SFTP_ATTRIBUTES) int
 fn C.libssh2_sftp_last_error(sftp &C.LIBSSH2_SFTP) int
 
-// SFTP open flags
-const sftp_fx_read = u32(0x00000001)
-const sftp_fx_write = u32(0x00000002)
-const sftp_fx_append = u32(0x00000008)
-const sftp_fx_create = u32(0x00000010)
-const sftp_fx_truncate = u32(0x00000020)
-const sftp_fx_excl = u32(0x00000040)
+// SFTP file open mode flags. Use bitwise OR (|) to combine flags:
+// ```v
+// sftp.open('file.txt', sftp_open_flag_read | sftp_open_flag_write, 0o644)!
+// ```
+pub const sftp_open_flag_read = 0x00000001
+pub const sftp_open_flag_write = 0x00000002
+pub const sftp_open_flag_append = 0x00000008
+pub const sftp_open_flag_create = 0x00000010
+pub const sftp_open_flag_trunc = 0x00000020
+pub const sftp_open_flag_excl = 0x00000040
 
-// SFTP attribute flags
-const sftp_attr_size = 1
-const sftp_attr_uidgid = 2
-const sftp_attr_permissions = 4
-const sftp_attr_modtime = 8
-const sftp_attr_allocsize = 16
+// SFTP attribute flags (internal, used for SftpAttrs.flags)
+const sftp_attr_size = u64(1)
+const sftp_attr_uidgid = u64(2)
+const sftp_attr_permissions = u64(4)
+const sftp_attr_modtime = u64(8)
+const sftp_attr_allocsize = u64(16)
 
 // SftpFileType represents the type of an SFTP file system entry.
 pub enum SftpFileType {
@@ -129,11 +132,11 @@ pub fn (sftp &Sftp) close() {
 
 // open opens a remote file for reading or writing.
 //   filename: path to the file on the remote server
-//   flags: combination of sftp_fx_* constants (e.g., sftp_fx_read)
-//   mode: permissions mode (0 for default)
-pub fn (sftp &Sftp) open(filename string, flags u32, mode u32) !&SftpFileHandle {
-	handle := C.libssh2_sftp_open_ex(sftp.handle, &char(filename.str), filename.len, flags,
-		int(mode), 0)
+//   flags: combination of sftp_open_flag_* values (e.g., `sftp_open_flag_read | sftp_open_flag_write`)
+//   mode: permissions mode (e.g., `0o644`). Use 0 for default.
+pub fn (sftp &Sftp) open(filename string, flags int, mode int) !&SftpFileHandle {
+	handle := C.libssh2_sftp_open_ex(sftp.handle, &char(filename.str), filename.len, u32(flags),
+		mode, 0)
 	if unsafe { handle == nil } {
 		return sftp_error(sftp)
 	}
@@ -185,7 +188,8 @@ pub fn (fh &SftpFileHandle) write(data []u8) !int {
 // stat retrieves file attributes for a given path.
 pub fn (sftp &Sftp) stat(path string) !SftpAttrs {
 	mut attrs := C.LIBSSH2_SFTP_ATTRIBUTES{}
-	rc := C.libssh2_sftp_stat_ex(sftp.handle, &char(path.str), path.len, 0, &attrs) // 0 = LIBSSH2_SFTP_STAT
+	rc :=
+		C.libssh2_sftp_stat_ex(sftp.handle, &char(path.str), path.len, 0, &attrs) // 0 = LIBSSH2_SFTP_STAT
 	if rc != 0 {
 		return sftp_error(sftp)
 	}
@@ -193,7 +197,7 @@ pub fn (sftp &Sftp) stat(path string) !SftpAttrs {
 }
 
 // setstat sets file attributes for a given path.
-pub fn (sftp &Sftp) setstat(path string, attrs SftpAttrs) ! {
+pub fn (sftp &Sftp) setstat(path string, attrs &SftpAttrs) ! {
 	cattrs := sftp_attrs_to_c(attrs)
 	rc := C.libssh2_sftp_setstat(sftp.handle, &char(path.str), path.len, &cattrs)
 	if rc != 0 {
@@ -237,7 +241,8 @@ pub fn (sftp &Sftp) rename(src string, dest string) ! {
 // realpath resolves a path to its canonical form.
 pub fn (sftp &Sftp) realpath(path string) !string {
 	mut buf := [4096]u8{}
-	rc := C.libssh2_sftp_symlink_ex(sftp.handle, &char(path.str), path.len, &buf[0], 4096, 2) // 2 = LIBSSH2_SFTP_REALPATH
+	rc :=
+		C.libssh2_sftp_symlink_ex(sftp.handle, &char(path.str), path.len, &buf[0], 4096, 2) // 2 = LIBSSH2_SFTP_REALPATH
 	if rc != 0 {
 		return sftp_error(sftp)
 	}
@@ -250,13 +255,13 @@ pub fn (sftp &Sftp) realpath(path string) !string {
 
 // read_file reads the entire contents of a remote file.
 pub fn (sftp &Sftp) read_file(path string) ![]u8 {
-	fh := sftp.open(path, sftp_fx_read, 0)!
+	fh := sftp.open(path, sftp_open_flag_read, 0o644)!
 	defer {
 		fh.close()
 	}
 
 	mut result := []u8{}
-	mut buf := []u8{len: 32768}
+	mut buf := []u8{len: default_read_buffer_size}
 	for {
 		n := fh.read(buf) or { break }
 		if n <= 0 {
@@ -269,7 +274,8 @@ pub fn (sftp &Sftp) read_file(path string) ![]u8 {
 
 // write_file writes data to a remote file, creating or truncating it.
 pub fn (sftp &Sftp) write_file(path string, data []u8) ! {
-	fh := sftp.open(path, sftp_fx_write | sftp_fx_create | sftp_fx_truncate, 0o644)!
+	fh := sftp.open(path, sftp_open_flag_write | sftp_open_flag_create | sftp_open_flag_trunc,
+		0o644)!
 	defer {
 		fh.close()
 	}
@@ -301,7 +307,7 @@ fn sftp_attrs_from_c(attrs C.LIBSSH2_SFTP_ATTRIBUTES) SftpAttrs {
 	}
 }
 
-fn sftp_attrs_to_c(attrs SftpAttrs) C.LIBSSH2_SFTP_ATTRIBUTES {
+fn sftp_attrs_to_c(attrs &SftpAttrs) C.LIBSSH2_SFTP_ATTRIBUTES {
 	return C.LIBSSH2_SFTP_ATTRIBUTES{
 		flags:       attrs.flags
 		filesize:    attrs.size
