@@ -56,8 +56,8 @@ mut:
 // Call connect() to establish the connection.
 pub fn new_session() !&Session {
 	handle := C.libssh2_session_init()
-	if unsafe { handle == nil } {
-		return error('Failed to create SSH2 session')
+	if isnil(handle) {
+		return error('Failed to initialize SSH2 session')
 	}
 	return &Session{
 		handle:    handle

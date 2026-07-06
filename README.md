@@ -40,8 +40,8 @@ Or install manually:
 v install ssh2
 
 # Or clone locally:
-git clone <repo-url>
-cd ssh2
+git clone https://github.com/vssh2/vssh2
+cd vssh2
 v run setup.vsh   # installs libssh2 if missing
 v build .
 ```
@@ -78,7 +78,7 @@ fn main() {
 	session := ssh2.connect_to(ssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
-		privkey_file: os.expand_tilde('~/.ssh/id_rsa')
+		privkey_file: os.expand_tilde_to_home('~/.ssh/id_rsa')
 		passphrase: 'my-key-passphrase' // optional
 	}) or { panic(err) }
 	defer { session.close() }
@@ -238,7 +238,10 @@ ssh2/
 ├── knownhosts.v    # Known hosts verification
 ├── sftp.v          # SFTP file operations
 ├── ssh2_test.v     # Tests
+├── build.vsh       # Build system (list tasks: `v run build.vsh --tasks`)
+├── setup.vsh       # Dependency installer: `v run setup.vsh`
 ├── v.mod           # Module definition
+├── LICENSE          # MIT license
 ├── README.md       # This file
 └── main.v          # Example usage
 ```
