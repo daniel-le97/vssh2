@@ -40,7 +40,7 @@ Or install manually:
 v install ssh2
 
 # Or clone locally:
-git clone https://github.com/vssh2/vssh2
+git clone https://github.com/daniel-le97/vssh2
 cd vssh2
 v run setup.vsh   # installs libssh2 if missing
 v build .
