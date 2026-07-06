@@ -226,24 +226,32 @@ SSH2_TEST_PASS=testpass \
 v test .
 ```
 
+## Notes
+
+- **`#include` directives**: All C `#include` directives (`<libssh2.h>`, `<libssh2_sftp.h>`) are consolidated in `ssh2.v` only — no other file contains `#include`. This avoids V compiler errors about duplicate `#include` across module files.
+- **Example & test files**: Moved to `examples/` directory with `module main` so they don't interfere when the module is used as a dependency. Run them with `v run examples/main.v`.
+- **Dependency setup**: The symlink `~/.vmodules/ssh2 → <repo>` is required for `v.mod` dependency resolution when used in other projects. Create it with `ln -sf $(pwd) ~/.vmodules/ssh2`.
+
 ## Project Structure
 
 ```
 ssh2/
-├── ssh2.v          # Module init, exit, core types
+├── ssh2.v          # Module init, exit, core types, C declarations
 ├── session.v       # Session management
 ├── auth.v          # Authentication methods
 ├── channel.v       # Channel operations
 ├── connect.v       # High-level connection helper
 ├── knownhosts.v    # Known hosts verification
 ├── sftp.v          # SFTP file operations
-├── ssh2_test.v     # Tests
 ├── build.vsh       # Build system (list tasks: `v run build.vsh --tasks`)
 ├── setup.vsh       # Dependency installer: `v run setup.vsh`
+├── setup           # Shell-based setup script (used by setup.vsh)
 ├── v.mod           # Module definition
 ├── LICENSE          # MIT license
 ├── README.md       # This file
-└── main.v          # Example usage
+└── examples/
+    ├── main.v      # Example usage (password & public key auth)
+    └── ssh2_test.v # Unit & integration tests
 ```
 
 ## License

@@ -2,8 +2,6 @@ module ssh2
 
 import net
 
-#include <libssh2.h>
-
 // ------------------------------------------------------------------
 // High-level convenience: connect to a remote host
 // ------------------------------------------------------------------

@@ -56,7 +56,7 @@ ctx.task(
 	help: 'Compile the project'
 	depends: ['fmt.check']
 	run: fn (t build.Task) ! {
-		result := os.execute('v .')
+		result := os.execute('v examples/main.v')
 		if result.exit_code != 0 {
 			return error('build failed')
 		}
@@ -70,7 +70,7 @@ ctx.task(
 	help: 'Compile in production mode'
 	depends: ['fmt.check']
 	run: fn (t build.Task) ! {
-		result := os.execute('v -prod -o ${project_name} .')
+		result := os.execute('v -prod -o ${project_name} examples/main.v')
 		if result.exit_code != 0 {
 			return error('production build failed')
 		}
@@ -84,7 +84,7 @@ ctx.task(
 	help: 'Run unit tests (no server required)'
 	depends: ['fmt.check']
 	run: fn (t build.Task) ! {
-		result := os.execute('v test .')
+		result := os.execute('v test examples')
 		if result.exit_code != 0 {
 			return error('tests failed')
 		}
@@ -102,7 +102,7 @@ ctx.task(
 			println('Skipping integration tests — set SSH2_TEST_HOST, SSH2_TEST_USER, SSH2_TEST_PASS')
 			return
 		}
-		result := os.execute('v test .')
+		result := os.execute('v test examples')
 		if result.exit_code != 0 {
 			return error('integration tests failed')
 		}

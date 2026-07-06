@@ -35,6 +35,7 @@ module ssh2
 // Uses pkg-config for portable library discovery across macOS, Linux, etc.
 #pkgconfig libssh2
 #include <libssh2.h>
+#include <libssh2_sftp.h>
 
 // ------------------------------------------------------------------
 // Opaque C type forward declarations from libssh2
