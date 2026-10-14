@@ -32,7 +32,7 @@ const color_reset = '\x1b[0m'
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn check_docker() ! {
-	result := os.execute('docker --version 2>/dev/null')
+	result := os.exec(['docker', '--version'])
 	if result.exit_code != 0 {
 		return error('Docker is not installed. Install it from https://docker.com')
 	}
@@ -51,7 +51,7 @@ fn print_error(msg string) {
 }
 
 fn command_exists(cmd string) bool {
-	res := os.execute('which ${cmd} 2>/dev/null')
+	res := os.exec(['which', cmd])
 	return res.exit_code == 0 && res.output.trim_space() != ''
 }
 
@@ -62,7 +62,7 @@ fn have_pkg_config() bool {
 fn libssh2_found() bool {
 	// Check via pkg-config first
 	if have_pkg_config() {
-		res := os.execute('pkg-config --exists libssh2 2>/dev/null')
+		res := os.exec(['pkg-config', '--exists', 'libssh2'])
 		if res.exit_code == 0 {
 			return true
 		}
@@ -117,7 +117,7 @@ fn run_setup() ! {
 		// macOS
 		if command_exists('brew') {
 			info('Installing libssh2 via Homebrew...')
-			os.system('brew install libssh2')
+			os.system_args(['brew', 'install', 'libssh2'])
 		} else {
 			return error('Homebrew not found. Install it from https://brew.sh')
 		}
@@ -125,23 +125,23 @@ fn run_setup() ! {
 		// Linux
 		if command_exists('apt-get') {
 			info('Installing libssh2 via apt...')
-			os.system('sudo apt-get update -qq')
-			os.system('sudo apt-get install -y -qq libssh2-1-dev')
+			os.system_args(['sudo', 'apt-get', 'update', '-qq'])
+			os.system_args(['sudo', 'apt-get', 'install', '-y', '-qq', 'libssh2-1-dev'])
 		} else if command_exists('dnf') {
 			info('Installing libssh2 via dnf...')
-			os.system('sudo dnf install -y libssh2-devel')
+			os.system_args(['sudo', 'dnf', 'install', '-y', 'libssh2-devel'])
 		} else if command_exists('yum') {
 			info('Installing libssh2 via yum...')
-			os.system('sudo yum install -y libssh2-devel')
+			os.system_args(['sudo', 'yum', 'install', '-y', 'libssh2-devel'])
 		} else if command_exists('pacman') {
 			info('Installing libssh2 via pacman...')
-			os.system('sudo pacman -S --noconfirm libssh2')
+			os.system_args(['sudo', 'pacman', '-S', '--noconfirm', 'libssh2'])
 		} else if command_exists('apk') {
 			info('Installing libssh2 via apk...')
-			os.system('sudo apk add libssh2-dev')
+			os.system_args(['sudo', 'apk', 'add', 'libssh2-dev'])
 		} else if command_exists('zypper') {
 			info('Installing libssh2 via zypper...')
-			os.system('sudo zypper install -y libssh2-devel')
+			os.system_args(['sudo', 'zypper', 'install', '-y', 'libssh2-devel'])
 		} else {
 			print_error('Could not detect your package manager.')
 			print_error('')
@@ -190,7 +190,7 @@ ctx.task(
 	help:    'Compile the project'
 	depends: ['fmt.check']
 	run:     fn (t build.Task) ! {
-		result := os.execute('v examples/main.v')
+		result := os.exec(['v', 'examples/main.v'])
 		if result.exit_code != 0 {
 			return error('build failed')
 		}
@@ -204,7 +204,7 @@ ctx.task(
 	help:    'Compile in production mode'
 	depends: ['fmt.check']
 	run:     fn (t build.Task) ! {
-		result := os.execute('v -prod -o ${project_name} examples/main.v')
+		result := os.exec(['v', '-prod', '-o', project_name, 'examples/main.v'])
 		if result.exit_code != 0 {
 			return error('production build failed')
 		}
@@ -218,7 +218,7 @@ ctx.task(
 	help:    'Run unit tests (no server required)'
 	depends: ['fmt.check']
 	run:     fn (t build.Task) ! {
-		result := os.execute('v test examples')
+		result := os.exec(['v', 'test', 'examples'])
 		if result.exit_code != 0 {
 			return error('tests failed')
 		}
@@ -236,7 +236,7 @@ ctx.task(
 			println('Skipping integration tests — set SSH2_TEST_HOST, SSH2_TEST_USER, SSH2_TEST_PASS')
 			return
 		}
-		result := os.execute('v test examples')
+		result := os.exec(['v', 'test', 'examples'])
 		if result.exit_code != 0 {
 			return error('integration tests failed')
 		}
@@ -249,7 +249,7 @@ ctx.task(
 	name: 'fmt'
 	help: 'Format all V source files'
 	run:  fn (t build.Task) ! {
-		result := os.execute('v fmt -w .')
+		result := os.exec(['v', 'fmt', '-w', '.'])
 		if result.exit_code != 0 {
 			return error('formatting failed')
 		}
@@ -262,7 +262,7 @@ ctx.task(
 	name: 'fmt.check'
 	help: 'Check formatting (no changes made)'
 	run:  fn (t build.Task) ! {
-		result := os.execute('v fmt -check . 2>&1')
+		result := os.exec(['v', 'fmt', '-check', '.'])
 		if result.exit_code != 0 {
 			println('Some files need formatting. Run: v run build.vsh fmt')
 			return error('fmt.check failed')
@@ -302,7 +302,7 @@ ctx.task(
 	run:  fn (t build.Task) ! {
 		println('── Project: ${project_name} ──────────────────────────────')
 		println('')
-		result := os.execute('v doc . 2>&1')
+		result := os.exec(['v', 'doc', '.'])
 		print(result.output)
 	}
 )
@@ -329,7 +329,7 @@ ctx.task(
 		check_docker()!
 
 		// Check if already running
-		existing := os.execute('docker ps -q --filter name=vssh2-test 2>/dev/null')
+		existing := os.exec(['docker', 'ps', '-q', '--filter', 'name=vssh2-test'])
 		if existing.output.trim_space() != '' {
 			println('docker.up: container vssh2-test is already running')
 			return
@@ -337,14 +337,15 @@ ctx.task(
 
 		// Start an Ubuntu container with SSH
 		println('docker.up: pulling ubuntu:latest...')
-		_ := os.execute('docker pull ubuntu:latest -q')
+		_ := os.exec(['docker', 'pull', 'ubuntu:latest', '-q'])
 
 		println('docker.up: starting container...')
-		result := os.execute('docker run -d --name vssh2-test -p 2222:22 ubuntu:latest sh -c "' +
-			'apt-get update -qq && apt-get install -y -qq openssh-server && ' +
+		setup_script := 'apt-get update -qq && apt-get install -y -qq openssh-server && ' +
 			"echo 'root:test' | chpasswd && " +
 			"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && " +
-			'service ssh start && sleep infinity" 2>&1')
+			'service ssh start && sleep infinity'
+		result := os.exec(['docker', 'run', '-d', '--name', 'vssh2-test', '-p', '2222:22', 'ubuntu:latest',
+			'sh', '-c', setup_script])
 
 		if result.exit_code != 0 {
 			return error('docker.up: failed to start container:\n${result.output}')
@@ -353,9 +354,10 @@ ctx.task(
 		// Wait for SSH to be ready
 		println('docker.up: waiting for SSH...')
 		for _ in 0 .. 30 {
-			ready := os.execute('docker exec vssh2-test sh -c "service ssh status 2>/dev/null"')
+			ready := os.exec(['docker', 'exec', 'vssh2-test', 'sh', '-c', 'service ssh status'])
 			if ready.exit_code == 0 {
-				_ := os.execute('docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" vssh2-test 2>/dev/null')
+				_ := os.exec(['docker', 'inspect', '-f',
+					'{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', 'vssh2-test'])
 				println('docker.up: ready — SSH available at localhost:2222')
 				println('')
 				println('  Run integration tests:')
@@ -377,12 +379,12 @@ ctx.task(
 	help: 'Stop and remove the test container'
 	run:  fn (t build.Task) ! {
 		check_docker()!
-		existing := os.execute('docker ps -aq --filter name=vssh2-test 2>/dev/null')
+		existing := os.exec(['docker', 'ps', '-aq', '--filter', 'name=vssh2-test'])
 		if existing.output.trim_space() == '' {
 			println('docker.down: no container to remove')
 			return
 		}
-		os.execute('docker rm -f vssh2-test 2>/dev/null')
+		os.exec(['docker', 'rm', '-f', 'vssh2-test'])
 		println('docker.down: container removed')
 	}
 )
@@ -393,12 +395,12 @@ ctx.task(
 	help: 'Get an interactive shell in the test container'
 	run:  fn (t build.Task) ! {
 		check_docker()!
-		existing := os.execute('docker ps -q --filter name=vssh2-test 2>/dev/null')
+		existing := os.exec(['docker', 'ps', '-q', '--filter', 'name=vssh2-test'])
 		if existing.output.trim_space() == '' {
 			return error('docker.shell: container vssh2-test is not running. Run v run build.vsh docker.up first')
 		}
 		println('docker.shell: opening shell...')
-		os.system('docker exec -it vssh2-test bash')
+		os.system_args(['docker', 'exec', '-it', 'vssh2-test', 'bash'])
 	}
 )
 
@@ -410,10 +412,10 @@ ctx.task(
 		check_docker()!
 
 		// Start container if not already running
-		existing := os.execute('docker ps -q --filter name=vssh2-test 2>/dev/null')
+		existing := os.exec(['docker', 'ps', '-q', '--filter', 'name=vssh2-test'])
 		if existing.output.trim_space() == '' {
 			println('docker.test: starting container...')
-			result := os.execute('v run build.vsh docker.up 2>&1')
+			result := os.exec(['v', 'run', 'build.vsh', 'docker.up'])
 			if result.exit_code != 0 {
 				return error('docker.test: failed to start container:\n${result.output}')
 			}
@@ -422,8 +424,8 @@ ctx.task(
 
 		// Run integration tests
 		println('docker.test: running integration tests...')
-		env := 'SSH2_TEST_HOST=localhost SSH2_TEST_PORT=2222 SSH2_TEST_USER=root SSH2_TEST_PASS=test'
-		test_result := os.execute('${env} v test .')
+		test_result := os.exec(['env', 'SSH2_TEST_HOST=localhost', 'SSH2_TEST_PORT=2222', 'SSH2_TEST_USER=root',
+			'SSH2_TEST_PASS=test', 'v', 'test', '.'])
 		if test_result.exit_code != 0 {
 			println('docker.test: tests FAILED')
 			// Keep container alive for debugging
@@ -434,7 +436,7 @@ ctx.task(
 		println('docker.test: all integration tests PASSED')
 
 		// Clean up
-		os.execute('docker rm -f vssh2-test 2>/dev/null')
+		os.exec(['docker', 'rm', '-f', 'vssh2-test'])
 		println('docker.test: container removed')
 	}
 )
@@ -465,7 +467,7 @@ ctx.task(
 		println('')
 		println('Running validation...')
 		// Run full check via subprocess (fmt → build → test)
-		result := os.execute('v run build.vsh check')
+		result := os.exec(['v', 'run', 'build.vsh', 'check'])
 		if result.exit_code != 0 {
 			// Revert version bump on failure
 			manifest.version = v.str()
@@ -473,7 +475,7 @@ ctx.task(
 			return error('release: checks failed, version reverted')
 		}
 		// Production build
-		result2 := os.execute('v -prod -o ${project_name} .')
+		result2 := os.exec(['v', '-prod', '-o', project_name, 'examples/main.v'])
 		if result2.exit_code != 0 {
 			manifest.version = v.str()
 			os.write_file('v.mod', vmod.encode(manifest))!
@@ -495,7 +497,7 @@ ctx.task(
 // Handle special flags before ctx.run() to avoid build module side effects
 
 if 'help' in os.args {
-	result := os.execute('v run build.vsh --tasks 2>&1')
+	result := os.exec(['v', 'run', 'build.vsh', '--tasks'])
 	println('── ${project_name} — available tasks ────────────────────')
 	println('')
 	print(result.output)
