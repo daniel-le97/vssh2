@@ -20,7 +20,7 @@ A pure **V language** wrapper for the [libssh2](https://www.libssh2.org/) librar
 
 ```bash
 # Auto-detect your OS and install libssh2:
-v run setup.vsh
+v run build.vsh setup
 ```
 
 Or install manually:
@@ -42,7 +42,7 @@ v install ssh2
 # Or clone locally:
 git clone https://github.com/daniel-le97/vssh2
 cd vssh2
-v run setup.vsh   # installs libssh2 if missing
+v run build.vsh setup   # installs libssh2 if missing
 v build .
 ```
 
@@ -243,9 +243,7 @@ ssh2/
 ├── connect.v       # High-level connection helper
 ├── knownhosts.v    # Known hosts verification
 ├── sftp.v          # SFTP file operations
-├── build.vsh       # Build system (list tasks: `v run build.vsh --tasks`)
-├── setup.vsh       # Dependency installer: `v run setup.vsh`
-├── setup           # Shell-based setup script (used by setup.vsh)
+├── build.vsh       # Build system + dependency installer (list tasks: `v run build.vsh help`)
 ├── v.mod           # Module definition
 ├── LICENSE          # MIT license
 ├── README.md       # This file

@@ -8,10 +8,10 @@
 //
 // ## Prerequisites
 //
-// libssh2 must be installed on your system. Run the setup script to auto-install:
+// libssh2 must be installed on your system. Run the setup task to auto-install:
 //
 // ```bash
-// v run setup.vsh
+// v run build.vsh setup
 // ```
 //
 // Or install manually:
@@ -22,12 +22,6 @@
 //   Arch:         sudo pacman -S libssh2
 //   Alpine:       sudo apk add libssh2-dev
 //
-// ## Why not bundled?
-//
-// libssh2 is LGPL-licensed (your project is MIT), and it depends on OpenSSL for
-// crypto. Bundling it would create license obligations and still require users
-// to install OpenSSL. Instead, we use your system's package manager — one command
-// and you're set. See `setup.sh` for auto-detection.
 
 module ssh2
 
@@ -120,7 +114,7 @@ pub fn (e Ssh2Error) code() int {
 fn init() {
 	rc := C.libssh2_init(0)
 	if rc != 0 {
-		panic('Failed to initialize libssh2 library (code: ${rc}). Is libssh2 installed? Run: v run setup.vsh')
+		panic('Failed to initialize libssh2 library (code: ${rc}). Is libssh2 installed? Run: v run build.vsh setup')
 	}
 }
 

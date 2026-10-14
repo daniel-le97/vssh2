@@ -8,7 +8,7 @@ fn C.libssh2_userauth_password(session &C.LIBSSH2_SESSION, username &char, passw
 fn C.libssh2_userauth_publickey_fromfile(session &C.LIBSSH2_SESSION, username &char, pubkey &char, privkey &char, passphrase &char) int
 fn C.libssh2_userauth_publickey_frommemory(session &C.LIBSSH2_SESSION, username &char, username_len int, pubkeydata &char, pubkeydata_len int, privkeydata &char, privkeydata_len int, passphrase &char) int
 fn C.libssh2_userauth_hostbased_fromfile(session &C.LIBSSH2_SESSION, username &char, hostname &char, host_username &char, pubkey &char, privkey &char, passphrase &char) int
-fn C.libssh2_userauth_keyboard_interactive(session &C.LIBSSH2_SESSION, username &char, response_handler fn (&C.LIBSSH2_SESSION, &&char, &&char, int, &C.LIBSSH2_USERAUTH_KBD_INT_PROMPT, &C.LIBSSH2_USERAUTH_KBD_INT_RESPONSE, voidptr)) int
+fn C.libssh2_userauth_keyboard_interactive(session &C.LIBSSH2_SESSION, username &char, response_handler fn (&C.LIBSSH2_SESSION, &&char, &&char, i32, &C.LIBSSH2_USERAUTH_KBD_INT_PROMPT, &C.LIBSSH2_USERAUTH_KBD_INT_RESPONSE, voidptr)) int
 fn C.libssh2_userauth_list(session &C.LIBSSH2_SESSION, username &char, username_len int) &char
 fn C.libssh2_userauth_authenticated(session &C.LIBSSH2_SESSION) int
 
@@ -103,8 +103,8 @@ struct C.LIBSSH2_USERAUTH_KBD_INT_RESPONSE {
 pub fn (s &Session) auth_keyboard_interactive(username string, callback fn (questions []string, echoes []bool) []string) ! {
 	// V callback adapter for the C callback
 	my_cb := fn [callback] (session &C.LIBSSH2_SESSION, name &&char, instruction &&char,
-	num_prompts int, prompts &C.LIBSSH2_USERAUTH_KBD_INT_PROMPT,
-	responses &C.LIBSSH2_USERAUTH_KBD_INT_RESPONSE, abstract voidptr) {
+		num_prompts i32, prompts &C.LIBSSH2_USERAUTH_KBD_INT_PROMPT,
+		responses &C.LIBSSH2_USERAUTH_KBD_INT_RESPONSE, abstract voidptr) {
 		if num_prompts <= 0 {
 			return
 		}
