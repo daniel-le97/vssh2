@@ -9,6 +9,8 @@ A pure **V language** wrapper for the [libssh2](https://www.libssh2.org/) librar
 - ✅ **SSH Session Management** — Connect, handshake, disconnect
 - ✅ **Authentication** — Password, public key (file & memory), keyboard-interactive, host-based
 - ✅ **Remote Command Execution** — Run commands and capture stdout/stderr
+- ✅ **Deadlock-Free Streaming** — stdout and stderr are drained together, so
+  large `stderr` logs (e.g. `docker build`) stream live instead of stalling
 - ✅ **Interactive Shell** — PTY allocation, shell sessions
 - ✅ **SFTP** — File read/write, stat, mkdir, rmdir, unlink, rename
 - ✅ **Known Hosts** — Verify server host keys
@@ -183,32 +185,137 @@ fn main() {
 }
 ```
 
+### Streaming Command Output
+
+`run()` runs a command and returns everything once it finishes. `start()` hands
+you the running command so you can consume output as it arrives — useful for
+build logs and progress bars:
+
+```v
+import ssh2
+import time
+
+fn main() {
+	mut session := ssh2.connect_to(ssh2.ConnectConfig{
+		host:         'example.com'
+		username:     'user'
+		privkey_file: os.expand_tilde_to_home('~/.ssh/id_ed25519')
+	}) or { panic(err) }
+	defer { session.close() }
+
+	mut proc := session.start('docker build --progress=plain .') or { panic(err) }
+	defer { proc.kill() } // no-op once finish() has run
+
+	for {
+		out := proc.pump() or { panic(err) }
+		// stdout and stderr both arrive here — docker build logs go to stderr.
+		print(out.stdout)
+		print(out.stderr)
+		if out.eof {
+			break
+		}
+		time.sleep(100 * time.millisecond)
+	}
+
+	if code := proc.finish() or { panic(err) } {
+		println('exit code: ${code}')
+	}
+}
+```
+
+> **V closures cannot carry state through a `fn` parameter.** V silently drops
+the captured variables of a closure that is passed through a plain
+`fn (...)` parameter, so this **does not** work:
+>
+> ```v
+> mut lines := []string{}
+> // BUG: `lines` never changes — the writes go to a discarded copy.
+> session.run_stream('ls -la', fn [mut lines] (chunk string) { lines << chunk })
+> ```
+>
+> `run_stream()`/`run_stream_split()` are therefore only for stateless
+> callbacks. When the consumer has state, use either the `ChunkSink` interface
+> (interface values keep their receiver) or `start()` + `pump()`:
+>
+> ```v
+> struct LogFile {
+> mut:
+> 	file os.File
+> }
+>
+> fn (mut l LogFile) write(chunk string) {
+> 	l.file.write_string(chunk) or {}
+> }
+>
+> // ...
+> mut sink := &LogFile{ file: file }
+> session.run_sink('make -j8', mut sink) or { panic(err) }
+> ```
+
+### Host Key Verification
+
+Host key verification is **opt-in** and defaults to `.ignore`, which keeps the
+historical behaviour of this module. Turn it on for anything production-like:
+
+```v
+session := ssh2.connect_to(ssh2.ConnectConfig{
+	host:             'example.com'
+	username:         'deploy'
+	privkey_file:     '~/.ssh/id_ed25519'
+	// accept_new records an unknown host key in the file (then requires it to
+	// match); strict refuses unknown hosts and changed keys outright.
+	host_key_mode:    .accept_new
+	known_hosts_file: '~/.ssh/known_hosts' // defaults to ~/.ssh/known_hosts
+}) or { panic(err) }
+```
+
+The three modes are `HostKeyMode.ignore`, `.accept_new` (OpenSSH's
+`StrictHostKeyChecking=accept-new`) and `.strict`. A host whose key changed is
+always rejected.
+
 ## API Overview
 
 | Function / Method | Description |
 |---|---|
 | `ssh2.version()` | Get libssh2 version string |
-| `ssh2.new_session()` | Create a new SSH session |
-| `ssh2.connect_to(config)` | High-level connect & authenticate |
-| `session.connect(fd)` | Perform SSH handshake |
+| `ssh2.strerror(code)` | Describe a libssh2 error code |
+| `ssh2.connect_to(config)` | High-level connect, verify & authenticate |
+| `session.connect(fd)` | Perform SSH handshake over your own socket |
 | `session.auth_password(u, p)` | Password authentication |
 | `session.auth_publickey_fromfile(...)` | Public key authentication from files |
 | `session.auth_publickey_frommemory(...)` | Public key authentication from memory |
 | `session.auth_list(user)` | List available auth methods |
+| `session.hostkey()` | Get the server host key (data, len, type) |
+| `session.verify_host_key(...)` | Check the host key against a known_hosts file |
+| `session.set_blocking(bool)` | Switch between blocking and non-blocking I/O |
+| `session.block_directions()` | Which direction libssh2 is waiting on |
+| `session.close()` | Disconnect, free the session **and close the socket** |
+| `session.run(cmd)` | Run a command, buffering the output |
+| `session.run_timeout(cmd, ms)` | `run` with an inactivity timeout |
+| `session.run_stream(cmd, cb)` | Run a command, forwarding output (stateless callback) |
+| `session.run_sink(cmd, mut sink)` | Run a command, forwarding stateful output |
+| `session.start(cmd)` | Start a command and pump its output yourself |
+| `session.exec_and_read(cmd)` | Execute command and get `(stdout, stderr)` |
+| `proc.pump()` / `proc.finish()` | Drain output / collect the exit code |
 | `session.open_channel()` | Open a new session channel |
-| `session.exec_and_read(cmd)` | Execute command and get output |
 | `session.init_sftp()` | Initialize SFTP session |
 | `session.new_knownhosts()` | Create known hosts store |
 | `channel.exec(cmd)` | Execute a command |
+| `channel.pump()` | Non-blocking read of both streams (deadlock-free) |
 | `channel.shell()` | Start a shell |
 | `ch.read(buf)` / `ch.write(data)` | Read/write channel data |
 | `sftp.open(path, flags, mode)` | Open a remote file |
 | `sftp.read_file(path)` | Read entire remote file |
 | `sftp.write_file(path, data)` | Write entire local file |
+| `sftp.list_dir(path)` | List a remote directory |
 | `sftp.stat(path)` | Get file attributes |
+| `sftp.exists(path)` | Test whether a path exists |
 | `sftp.mkdir(path, mode)` | Create directory |
 | `sftp.rmdir(path)` | Remove directory |
 | `sftp.unlink(path)` | Remove file |
+| `sftp.rename(src, dst)` | Rename/move a remote file |
+| `sftp.readlink(path)` | Resolve a symbolic link |
+| `sftp.chmod(path, mode)` | Change permission bits |
 
 ## Running Tests
 
@@ -219,28 +326,55 @@ v test .
 
 ### Integration tests (requires SSH server):
 ```bash
+# password auth
 SSH2_TEST_HOST=localhost \
 SSH2_TEST_PORT=22 \
 SSH2_TEST_USER=testuser \
 SSH2_TEST_PASS=testpass \
 v test .
+
+# public key auth (also exercises streaming, exit codes, SFTP and host keys)
+SSH2_TEST_HOST=localhost \
+SSH2_TEST_PORT=22 \
+SSH2_TEST_USER=testuser \
+SSH2_TEST_KEY=~/.ssh/id_ed25519 \
+v test .
 ```
+
+The key-based tests intentionally do **not** set `pubkey_file`: libssh2 treats an
+empty public key path as a filename and fails with "Unable to open public key
+file", so this covers the regression where key authentication was broken when
+no `.pub` file was supplied.
 
 ## Notes
 
-- **`#include` directives**: All C `#include` directives (`<libssh2.h>`, `<libssh2_sftp.h>`) are consolidated in `ssh2.v` only — no other file contains `#include`. This avoids V compiler errors about duplicate `#include` across module files.
+- **Closure capture**: V drops the captured variables of a closure passed
+  through a plain `fn (...)` parameter. Use `ChunkSink`, or `Session.start()` +
+  `ExecProcess.pump()`, whenever the receiver needs to keep state.
+- **Sockets**: `connect_to()` takes ownership of the TCP socket it opens and
+  closes it in `close()`. `close()` is idempotent, so it is safe in `defer`.
+  A file descriptor passed to `connect(fd)` yourself stays yours.
+- **Output is drained multiplexed**: `run()`, `run_stream()` and `pump()` read
+  stdout and stderr without blocking on either, so a command that writes a large
+  log to stderr (e.g. `docker build`) can neither deadlock once the ~2 MB
+  channel window fills up nor have its output truncated by a session timeout.
+- **`#include` directives**: All C `#include` directives (`<libssh2.h>`,
+  `<libssh2_sftp.h>`) are consolidated in `ssh2.v` only — no other file contains
+  `#include`. This avoids V compiler errors about duplicate `#include` across module files.
 - **Example & test files**: Moved to `examples/` directory with `module main` so they don't interfere when the module is used as a dependency. Run them with `v run examples/main.v`.
 - **Dependency setup**: The symlink `~/.vmodules/ssh2 → <repo>` is required for `v.mod` dependency resolution when used in other projects. Create it with `ln -sf $(pwd) ~/.vmodules/ssh2`.
+- **Platforms**: POSIX (Linux/macOS). libssh2 is discovered with `pkg-config`.
 
 ## Project Structure
 
 ```
 ssh2/
-├── ssh2.v          # Module init, exit, core types, C declarations
-├── session.v       # Session management
+├── ssh2.v          # Module init, exit, error codes, core types
+├── session.v       # Session management, socket ownership, keepalive
 ├── auth.v          # Authentication methods
-├── channel.v       # Channel operations
-├── connect.v       # High-level connection helper
+├── channel.v       # Channel operations, non-blocking multiplexed pump()
+├── exec.v          # Command execution: run / run_stream / run_sink / start
+├── connect.v       # High-level connection helper + host key policy
 ├── knownhosts.v    # Known hosts verification
 ├── sftp.v          # SFTP file operations
 ├── build.vsh       # Build system + dependency installer (list tasks: `v run build.vsh help`)

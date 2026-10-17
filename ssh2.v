@@ -132,33 +132,111 @@ pub fn version() string {
 	return unsafe { cstring_to_vstring(ptr) }
 }
 
-// quoted key type strings
+// ------------------------------------------------------------------
+// libssh2 error codes
+// ------------------------------------------------------------------
+// These mirror the `LIBSSH2_ERROR_*` constants declared in <libssh2.h>.
+// Keeping them in sync matters: several code paths distinguish "no data yet"
+// (`error_eagain`) from a real failure.
+pub const error_socket_none = -1
+pub const error_banner_recv = -2
+pub const error_banner_send = -3
+pub const error_invalid_mac = -4
+pub const error_kex_failure = -5
+pub const error_alloc = -6
+pub const error_socket_send = -7
+pub const error_key_exchange_failure = -8
+pub const error_timeout = -9
+pub const error_hostkey_init = -10
+pub const error_hostkey_sign = -11
+pub const error_decrypt = -12
+pub const error_socket_disconnect = -13
+pub const error_proto = -14
+pub const error_password_expired = -15
+pub const error_file = -16
+pub const error_method_none = -17
+pub const error_authentication_failed = -18
+pub const error_publickey_unverified = -19
+pub const error_channel_outoforder = -20
+pub const error_channel_failure = -21
+pub const error_channel_request_denied = -22
+pub const error_channel_unknown = -23
+pub const error_channel_window_exceeded = -24
+pub const error_channel_packet_exceeded = -25
+pub const error_channel_closed = -26
+pub const error_channel_eof_sent = -27
+pub const error_scp_protocol = -28
+pub const error_zlib = -29
+pub const error_socket_timeout = -30
+pub const error_sftp_protocol = -31
+pub const error_request_denied = -32
+pub const error_method_not_supported = -33
+pub const error_inval = -34
+pub const error_invalid_poll_type = -35
+pub const error_publickey_protocol = -36
+pub const error_eagain = -37
+
+// Session-level block directions, returned by `Session.block_directions()`.
+// They mirror `LIBSSH2_SESSION_BLOCK_INBOUND` / `OUTBOUND`.
+pub const session_block_inbound = 0x0001
+pub const session_block_outbound = 0x0002
+
+// is_error_code reports whether `rc` is a libssh2 error (negative) instead of a
+// byte count.
+pub fn is_error_code(rc int) bool {
+	return rc < 0
+}
+
+// is_eagain reports whether `err` means "the operation would block".
+// Non-blocking calls return this instead of blocking; it is not a real failure.
+pub fn is_eagain(rc int) bool {
+	return rc == error_eagain
+}
+
+// strerror maps a libssh2 error code to a human readable description.
+pub fn strerror(code int) string {
+	return socket_error_message(code)
+}
+
 fn socket_error_message(code int) string {
 	return match code {
-		-1 { 'socket error' }
-		-2 { 'socket send error' }
-		-3 { 'socket timeout' }
-		-4 { 'channel eof' }
-		-5 { 'channel closed' }
-		-6 { 'channel window exceeded' }
-		-7 { 'channel out of order' }
-		-8 { 'invalid parameter' }
-		-9 { 'socket disconnected' }
-		-10 { 'alloc error' }
-		-11 { 'socket none' }
-		-12 { 'invalid mac' }
-		-13 { 'auth failed' }
-		-14 { 'public key unverified' }
-		-15 { 'channel failure' }
-		-16 { 'sftp failure' }
-		-17 { 'sftp bad message' }
-		-18 { 'sftp permission denied' }
-		-19 { 'sftp no such file' }
-		-20 { 'sftp unsupported' }
-		-21 { 'sftp no connection' }
-		-22 { 'knownhosts failure' }
-		-23 { 'channel unknown' }
-		-24 { 'agent failure' }
+		error_socket_none { 'socket none' }
+		error_banner_recv { 'banner receive failed' }
+		error_banner_send { 'banner send failed' }
+		error_invalid_mac { 'invalid MAC' }
+		error_kex_failure { 'key exchange failure' }
+		error_alloc { 'memory allocation failure' }
+		error_socket_send { 'socket send error' }
+		error_key_exchange_failure { 'key exchange failure' }
+		error_timeout { 'timeout' }
+		error_hostkey_init { 'host key init failed' }
+		error_hostkey_sign { 'host key sign failed' }
+		error_decrypt { 'decrypt failed' }
+		error_socket_disconnect { 'socket disconnected' }
+		error_proto { 'protocol error' }
+		error_password_expired { 'password expired' }
+		error_file { 'file error' }
+		error_method_none { 'no authentication method available' }
+		error_authentication_failed { 'authentication failed' }
+		error_publickey_unverified { 'public key unverified' }
+		error_channel_outoforder { 'channel out of order' }
+		error_channel_failure { 'channel failure' }
+		error_channel_request_denied { 'channel request denied' }
+		error_channel_unknown { 'unknown channel' }
+		error_channel_window_exceeded { 'channel window exceeded' }
+		error_channel_packet_exceeded { 'channel packet exceeded' }
+		error_channel_closed { 'channel closed' }
+		error_channel_eof_sent { 'channel EOF already sent' }
+		error_scp_protocol { 'SCP protocol error' }
+		error_zlib { 'zlib error' }
+		error_socket_timeout { 'socket timeout' }
+		error_sftp_protocol { 'SFTP protocol error' }
+		error_request_denied { 'request denied' }
+		error_method_not_supported { 'method not supported' }
+		error_inval { 'invalid parameter' }
+		error_invalid_poll_type { 'invalid poll type' }
+		error_publickey_protocol { 'public key protocol error' }
+		error_eagain { 'would block (no data available)' }
 		else { 'unknown error (${code})' }
 	}
 }

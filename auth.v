@@ -36,12 +36,19 @@ pub fn (s &Session) auth_password(username string, password string) ! {
 
 // auth_publickey_fromfile authenticates using a public key from files.
 //   username:  the SSH username
-//   pubkey:    path to the public key file (can be empty to derive from private key)
+//   pubkey:    path to the public key file. Pass an empty string to let libssh2
+//              derive it from the private key.
 //   privkey:   path to the private key file
-//   passphrase: passphrase for the private key (can be empty)
+//   passphrase: passphrase for the private key (empty when the key is unencrypted)
+//
+// libssh2 distinguishes NULL from "" for both `pubkey` and `passphrase`:
+// an empty string for `pubkey` is treated as a filename and fails with
+// "Unable to open public key file", so empty values are passed through as NULL.
 pub fn (s &Session) auth_publickey_fromfile(username string, pubkey string, privkey string, passphrase string) ! {
-	rc := C.libssh2_userauth_publickey_fromfile(s.handle, &char(username.str), &char(pubkey.str),
-		&char(privkey.str), &char(passphrase.str))
+	pubkey_ptr := if pubkey.len > 0 { &char(pubkey.str) } else { &char(unsafe { nil }) }
+	passphrase_ptr := if passphrase.len > 0 { &char(passphrase.str) } else { &char(unsafe { nil }) }
+	rc := C.libssh2_userauth_publickey_fromfile(s.handle, &char(username.str), pubkey_ptr,
+		&char(privkey.str), passphrase_ptr)
 	if rc != 0 {
 		return ssh2_error(rc, s)
 	}
@@ -155,9 +162,12 @@ pub fn (s &Session) is_authenticated() bool {
 
 fn parse_auth_methods(methods_str string) []AuthMethod {
 	mut methods := []AuthMethod{}
-	parts := methods_str.split(',')
-	for part in parts {
-		methods << match part.trim_space() {
+	for part in methods_str.split(',') {
+		name := part.trim_space()
+		if name.len == 0 {
+			continue
+		}
+		methods << match name {
 			'password' { AuthMethod.password }
 			'publickey' { AuthMethod.publickey }
 			'hostbased' { AuthMethod.hostbased }

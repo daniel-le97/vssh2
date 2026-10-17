@@ -2,6 +2,7 @@ module main
 
 import ssh2
 import os
+import time
 
 // Example usage of the ssh2 V wrapper.
 // This demonstrates connecting to an SSH server, authenticating, and running commands.
@@ -47,4 +48,23 @@ fn main() {
 
 	// Get exit status from last command
 	println('Done!')
+
+	// Stream a command's output live. `start()` + `pump()` keeps all state in
+	// this function — a capturing closure passed through a `fn` parameter would
+	// silently lose it (see the README).
+	println('=== Streaming ===')
+	mut proc := session.start('for i in 1 2 3; do echo line \\$i 1>&2; sleep 0.2; done') or {
+		panic(err)
+	}
+	for {
+		out := proc.pump() or { panic(err) }
+		print(out.stdout)
+		print(out.stderr)
+		if out.eof {
+			break
+		}
+		time.sleep(50 * time.millisecond)
+	}
+	code := proc.finish() or { panic(err) }
+	println('streamed command exit code: ${code}')
 }

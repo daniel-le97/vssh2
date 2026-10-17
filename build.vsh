@@ -344,8 +344,8 @@ ctx.task(
 			"echo 'root:test' | chpasswd && " +
 			"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && " +
 			'service ssh start && sleep infinity'
-		result := os.exec(['docker', 'run', '-d', '--name', 'vssh2-test', '-p', '2222:22', 'ubuntu:latest',
-			'sh', '-c', setup_script])
+		result := os.exec(['docker', 'run', '-d', '--name', 'vssh2-test', '-p', '2222:22',
+			'ubuntu:latest', 'sh', '-c', setup_script])
 
 		if result.exit_code != 0 {
 			return error('docker.up: failed to start container:\n${result.output}')
@@ -424,8 +424,8 @@ ctx.task(
 
 		// Run integration tests
 		println('docker.test: running integration tests...')
-		test_result := os.exec(['env', 'SSH2_TEST_HOST=localhost', 'SSH2_TEST_PORT=2222', 'SSH2_TEST_USER=root',
-			'SSH2_TEST_PASS=test', 'v', 'test', '.'])
+		test_result := os.exec(['env', 'SSH2_TEST_HOST=localhost', 'SSH2_TEST_PORT=2222',
+			'SSH2_TEST_USER=root', 'SSH2_TEST_PASS=test', 'v', 'test', '.'])
 		if test_result.exit_code != 0 {
 			println('docker.test: tests FAILED')
 			// Keep container alive for debugging

@@ -1,5 +1,8 @@
 module ssh2
 
+import strings
+import time
+
 // ------------------------------------------------------------------
 // C function declarations
 // ------------------------------------------------------------------
@@ -19,6 +22,7 @@ fn C.libssh2_channel_close(channel &C.LIBSSH2_CHANNEL) int
 fn C.libssh2_channel_wait_closed(channel &C.LIBSSH2_CHANNEL) int
 fn C.libssh2_channel_get_exit_status(channel &C.LIBSSH2_CHANNEL) int
 fn C.libssh2_channel_setenv(channel &C.LIBSSH2_CHANNEL, varname &char, varname_len int, value &char, value_len int) int
+fn C.libssh2_channel_set_blocking(channel &C.LIBSSH2_CHANNEL, blocking int)
 fn C.libssh2_channel_request_pty(channel &C.LIBSSH2_CHANNEL, term &char) int
 fn C.libssh2_channel_request_pty_ex(channel &C.LIBSSH2_CHANNEL, term &char, term_len int, modes &char, modes_len int, width int, height int, width_px int, height_px int) int
 fn C.libssh2_channel_x11_req(channel &C.LIBSSH2_CHANNEL, screen_number int) int
@@ -31,10 +35,34 @@ fn C.libssh2_channel_window_write_ex(channel &C.LIBSSH2_CHANNEL, window_size_ini
 const stream_stdout = 0
 const stream_stderr = 1
 
+// pump_max_bytes_per_stream caps how much one pump() call reads from a single
+// stream, so a busy stdout cannot starve stderr.
+const pump_max_bytes_per_stream = 262144
+
 // Channel represents an SSH channel for executing commands, starting shells, etc.
+@[heap]
 pub struct Channel {
+mut:
 	handle         voidptr = unsafe { nil }
 	session_handle voidptr = unsafe { nil }
+	closed         bool
+	// Per-stream EOF flags tracked by pump().
+	stdout_eof bool
+	stderr_eof bool
+	// Reusable read buffers (avoid an allocation per pump() call).
+	read_buf []u8
+	err_buf  []u8
+}
+
+// PumpResult is the outcome of a single non-blocking `Channel.pump()` call.
+pub struct PumpResult {
+pub mut:
+	stdout string
+	stderr string
+	// bytes is the total number of bytes read by this call.
+	bytes int
+	// eof is true once both streams have signalled end-of-file.
+	eof bool
 }
 
 // ------------------------------------------------------------------
@@ -53,12 +81,103 @@ pub fn (s &Session) open_channel() !&Channel {
 	}
 }
 
-// close closes the channel and frees its resources.
-pub fn (ch &Channel) close() {
+// close closes the channel and frees its resources. Calling it twice is safe.
+pub fn (mut ch Channel) close() {
+	if ch.closed {
+		return
+	}
+	ch.closed = true
 	if unsafe { ch.handle != nil } {
 		C.libssh2_channel_close(ch.handle)
 		C.libssh2_channel_free(ch.handle)
+		ch.handle = unsafe { nil }
 	}
+}
+
+// set_blocking switches this channel between blocking and non-blocking I/O.
+// In non-blocking mode reads return `error_eagain` instead of waiting for data.
+pub fn (ch &Channel) set_blocking(blocking bool) {
+	C.libssh2_channel_set_blocking(ch.handle, if blocking { 1 } else { 0 })
+}
+
+// ------------------------------------------------------------------
+// Non-blocking multiplexed reads
+// ------------------------------------------------------------------
+
+// pump reads whatever is available on stdout and stderr right now and returns
+// it in arrival order per stream.
+//
+// This is the safe way to consume a command's output: reading one stream to EOF
+// before touching the other deadlocks as soon as the remote fills the channel
+// window (~2 MB) on the stream you are not reading — which is exactly what
+// happens when `docker build` writes a large log to stderr.
+//
+// The session must be in non-blocking mode (`Session.set_blocking(false)`).
+// Returns `eof: true` once both streams are done; callers should wait on
+// `Session.wait_socket()` when a call returns no bytes and `eof` is false.
+pub fn (mut ch Channel) pump() !PumpResult {
+	if unsafe { ch.handle == nil } {
+		return PumpResult{
+			eof: true
+		}
+	}
+	if ch.read_buf.len == 0 {
+		ch.read_buf = []u8{len: default_read_buffer_size}
+		ch.err_buf = []u8{len: default_read_buffer_size}
+	}
+
+	mut out_sb := strings.Builder{}
+	mut err_sb := strings.Builder{}
+	mut result := PumpResult{}
+
+	if !ch.stdout_eof {
+		mut drained := 0
+		for drained < pump_max_bytes_per_stream {
+			rc := C.libssh2_channel_read_ex(ch.handle, stream_stdout, ch.read_buf.data,
+				ch.read_buf.len)
+			if rc > 0 {
+				out_sb.write_string(unsafe { ch.read_buf[..rc].bytestr() })
+				result.bytes += rc
+				drained += rc
+				continue
+			}
+			if rc == 0 {
+				ch.stdout_eof = true
+				break
+			}
+			if rc == error_eagain {
+				break
+			}
+			return channel_error(rc, ch.session_handle)
+		}
+	}
+
+	if !ch.stderr_eof {
+		mut drained := 0
+		for drained < pump_max_bytes_per_stream {
+			rc := C.libssh2_channel_read_ex(ch.handle, stream_stderr, ch.err_buf.data,
+				ch.err_buf.len)
+			if rc > 0 {
+				err_sb.write_string(unsafe { ch.err_buf[..rc].bytestr() })
+				result.bytes += rc
+				drained += rc
+				continue
+			}
+			if rc == 0 {
+				ch.stderr_eof = true
+				break
+			}
+			if rc == error_eagain {
+				break
+			}
+			return channel_error(rc, ch.session_handle)
+		}
+	}
+
+	result.stdout = out_sb.str()
+	result.stderr = err_sb.str()
+	result.eof = ch.stdout_eof && ch.stderr_eof
+	return result
 }
 
 // ------------------------------------------------------------------
@@ -125,6 +244,32 @@ pub fn (ch &Channel) write(data []u8) !int {
 // write_string writes a string to the channel's stdin stream.
 pub fn (ch &Channel) write_string(data string) !int {
 	return ch.write(data.bytes())
+}
+
+// write_all writes `data` to the channel's stdin stream, retrying partial
+// writes (and EAGAIN in non-blocking mode) until every byte has been sent.
+// This matters for payloads larger than one SSH packet.
+pub fn (ch &Channel) write_all(data []u8) ! {
+	mut offset := 0
+	for offset < data.len {
+		rc := C.libssh2_channel_write_ex(ch.handle, stream_stdout, data[offset..].data,
+			data.len - offset)
+		if rc == error_eagain {
+			// Non-blocking session with a full window: yield briefly instead of
+			// spinning. Blocking sessions never hit this path.
+			time.sleep(1 * time.millisecond)
+			continue
+		}
+		if rc < 0 {
+			return channel_error(rc, ch.session_handle)
+		}
+		offset += rc
+	}
+}
+
+// write_string_all writes a whole string to the channel's stdin stream.
+pub fn (ch &Channel) write_string_all(data string) ! {
+	return ch.write_all(data.bytes())
 }
 
 // ------------------------------------------------------------------
@@ -221,13 +366,17 @@ pub fn (ch &Channel) flush_stderr() ! {
 
 // channel_error creates an IError from a libssh2 error code using a raw session handle.
 fn channel_error(code int, session_handle &C.LIBSSH2_SESSION) IError {
-	msg := if unsafe { session_handle != nil } {
+	mut msg := ''
+	if unsafe { session_handle != nil } {
 		mut cmsg := &char(unsafe { nil })
 		mut msg_len := 0
 		C.libssh2_session_last_error(session_handle, &cmsg, &msg_len, 0)
-		unsafe { cstring_to_vstring(cmsg) }
-	} else {
-		socket_error_message(code)
+		if unsafe { cmsg != nil } {
+			msg = unsafe { cstring_to_vstring(cmsg) }
+		}
+	}
+	if msg.len == 0 {
+		msg = socket_error_message(code)
 	}
 	return Ssh2Error{
 		code:    code
@@ -238,41 +387,6 @@ fn channel_error(code int, session_handle &C.LIBSSH2_SESSION) IError {
 // ------------------------------------------------------------------
 // Convenience: execute a command and collect output
 // ------------------------------------------------------------------
-
-// exec_and_read executes a command, reads all stdout and stderr, and returns them.
-// This is a high-level convenience method.
-pub fn (s &Session) exec_and_read(command string) !(string, string) {
-	ch := s.open_channel()!
-	defer {
-		ch.close()
-	}
-
-	ch.exec(command)!
-
-	// Read all stdout
-	mut stdout_buf := []u8{len: default_read_buffer_size}
-	mut stdout_result := ''
-	for {
-		n := ch.read(stdout_buf) or { break }
-		if n <= 0 {
-			break
-		}
-		stdout_result += unsafe { stdout_buf[..n].bytestr() }
-	}
-
-	// Read all stderr
-	mut stderr_buf := []u8{len: default_read_buffer_size}
-	mut stderr_result := ''
-	for {
-		n := ch.read_stderr(stderr_buf) or { break }
-		if n <= 0 {
-			break
-		}
-		stderr_result += unsafe { stderr_buf[..n].bytestr() }
-	}
-
-	ch.wait_eof()!
-	ch.wait_closed()!
-
-	return stdout_result, stderr_result
-}
+// See exec.v — `Session.exec_and_read()`, `Session.run()` and
+// `Session.run_stream()` are defined there. They use the non-blocking `pump()`
+// above so that a command writing to stderr cannot deadlock the connection.

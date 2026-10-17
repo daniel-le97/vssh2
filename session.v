@@ -1,5 +1,7 @@
 module ssh2
 
+import net
+
 // ------------------------------------------------------------------
 // C function declarations
 // ------------------------------------------------------------------
@@ -8,14 +10,16 @@ fn C.libssh2_session_init() &C.LIBSSH2_SESSION
 fn C.libssh2_session_free(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_handshake(session &C.LIBSSH2_SESSION, sock int) int
 fn C.libssh2_session_last_errno(session &C.LIBSSH2_SESSION) int
+fn C.libssh2_session_last_errno(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_last_error(session &C.LIBSSH2_SESSION, errmsg &&char, errmsg_len &int, want_buf int) int
 fn C.libssh2_session_set_blocking(session &C.LIBSSH2_SESSION, blocking int)
 fn C.libssh2_session_get_blocking(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_banner_get(session &C.LIBSSH2_SESSION) &char
 fn C.libssh2_session_banner_set(session &C.LIBSSH2_SESSION, banner &char) int
 fn C.libssh2_session_methods(session &C.LIBSSH2_SESSION, method_type int) &char
-fn C.libssh2_session_hostkey(session &C.LIBSSH2_SESSION, len &int, typ &int) &char
+fn C.libssh2_session_hostkey(session &C.LIBSSH2_SESSION, len &usize, typ &int) &char
 fn C.libssh2_session_disconnect(session &C.LIBSSH2_SESSION, reason &char) int
+fn C.libssh2_session_block_directions(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_get_timeout(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_set_timeout(session &C.LIBSSH2_SESSION, timeout int)
 fn C.libssh2_keepalive_config(session &C.LIBSSH2_SESSION, want_reply int, interval int)
@@ -44,6 +48,10 @@ mut:
 	handle voidptr = unsafe { nil }
 	// socket_fd is the underlying socket descriptor
 	socket_fd int = -1
+	// own_socket is set when the session created the TCP connection itself
+	// (`connect_to`). It is closed by `close()`.
+	own_socket &net.TcpConn = unsafe { nil }
+	closed     bool
 }
 
 // ------------------------------------------------------------------
@@ -82,11 +90,33 @@ pub fn (s &Session) disconnect(message string) ! {
 	}
 }
 
-// close frees the session handle. Call this when done.
-pub fn (s &Session) close() {
-	if unsafe { s.handle != nil } {
-		C.libssh2_session_free(s.handle)
+// close disconnects, frees the session handle, and closes the TCP socket that
+// `connect_to()` opened on your behalf. Calling it repeatedly is safe.
+//
+// A socket descriptor passed to `connect()` directly stays owned by the caller
+// and is not closed here.
+pub fn (mut s Session) close() {
+	if s.closed {
+		return
 	}
+	s.closed = true
+	if unsafe { s.handle != nil } {
+		reason := 'Normal Shutdown'
+		C.libssh2_session_disconnect(s.handle, &char(reason.str))
+		C.libssh2_session_free(s.handle)
+		s.handle = unsafe { nil }
+	}
+	if s.own_socket != unsafe { nil } {
+		mut conn := s.own_socket
+		conn.close() or {}
+		s.own_socket = unsafe { nil }
+	}
+	s.socket_fd = -1
+}
+
+// is_closed reports whether `close()` has already run for this session.
+pub fn (s &Session) is_closed() bool {
+	return s.closed
 }
 
 // ------------------------------------------------------------------
@@ -133,6 +163,14 @@ pub fn (s &Session) send_keepalive() !int {
 	return seconds_to_next
 }
 
+// block_directions returns the direction(s) libssh2 is currently waiting on.
+// The result is a bitmask of `session_block_inbound` / `session_block_outbound`.
+// Only meaningful while the session is in non-blocking mode; it is exposed for
+// callers that want to drive their own socket wait (e.g. with select/poll).
+pub fn (s &Session) block_directions() int {
+	return C.libssh2_session_block_directions(s.handle)
+}
+
 // ------------------------------------------------------------------
 // Session information
 // ------------------------------------------------------------------
@@ -164,20 +202,29 @@ pub fn (s &Session) method(method_type MethodType) string {
 }
 
 // hostkey returns the remote host's hostkey.
-// Returns (key_data, length, type).
+// Returns (key_data, length, type). The type is a LIBSSH2_HOSTKEY_TYPE_* value
+// (see `HostKeyType`).
+//
+// NOTE: the C length out-parameter is a size_t, not an int — declaring it as an
+// int corrupts the stack.
 pub fn (s &Session) hostkey() ([]u8, int, int) {
-	mut key_len := 0
+	mut key_len := usize(0)
 	mut key_type := 0
 	ptr := C.libssh2_session_hostkey(s.handle, &key_len, &key_type)
 	if unsafe { ptr == nil } {
 		return []u8{}, 0, 0
 	}
 	// Copy the key data into a V byte slice
-	mut result := []u8{len: key_len}
+	mut result := []u8{len: int(key_len)}
 	unsafe {
 		C.memcpy(result.data, ptr, key_len)
 	}
-	return result, key_len, key_type
+	return result, int(key_len), key_type
+}
+
+// last_errno returns the raw libssh2 error number of the last operation.
+pub fn (s &Session) last_errno() int {
+	return C.libssh2_session_last_errno(s.handle)
 }
 
 // last_error returns the last error code and message for this session.
@@ -185,7 +232,11 @@ pub fn (s &Session) last_error() (int, string) {
 	mut cmsg := &char(unsafe { nil })
 	mut msg_len := 0
 	code := C.libssh2_session_last_error(s.handle, &cmsg, &msg_len, 0)
-	msg := unsafe { cstring_to_vstring(cmsg) }
+	msg := if unsafe { cmsg == nil } {
+		socket_error_message(code)
+	} else {
+		unsafe { cstring_to_vstring(cmsg) }
+	}
 	return code, msg
 }
 
@@ -195,13 +246,17 @@ pub fn (s &Session) last_error() (int, string) {
 
 // ssh2_error creates an IError from a libssh2 error code.
 fn ssh2_error(code int, s &Session) IError {
-	msg := if unsafe { s != nil && s.handle != nil } {
+	mut msg := ''
+	if unsafe { s != nil && s.handle != nil } {
 		mut cmsg := &char(unsafe { nil })
 		mut msg_len := 0
 		C.libssh2_session_last_error(s.handle, &cmsg, &msg_len, 0)
-		unsafe { cstring_to_vstring(cmsg) }
-	} else {
-		socket_error_message(code)
+		if unsafe { cmsg != nil } {
+			msg = unsafe { cstring_to_vstring(cmsg) }
+		}
+	}
+	if msg.len == 0 {
+		msg = socket_error_message(code)
 	}
 	return Ssh2Error{
 		code:    code
