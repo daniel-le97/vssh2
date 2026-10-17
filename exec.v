@@ -262,6 +262,15 @@ pub fn (s &Session) run_sink(cmd string, mut sink ChunkSink) !ExecResult {
 	return s.exec_core(cmd, 0, mut out_sink, mut err_sink)
 }
 
+// run_sink_timeout is `run_sink` with an idle timeout: the command is abandoned
+// when it has produced no output at all for `idle_timeout_ms` milliseconds.
+// `0` waits indefinitely.
+pub fn (s &Session) run_sink_timeout(cmd string, mut sink ChunkSink, idle_timeout_ms int) !ExecResult {
+	mut out_sink := sink
+	mut err_sink := sink
+	return s.exec_core(cmd, idle_timeout_ms, mut out_sink, mut err_sink)
+}
+
 // exec_core is the shared implementation behind the entry points above.
 fn (s &Session) exec_core(cmd string, idle_timeout_ms int, mut out_sink ChunkSink, mut err_sink ChunkSink) !ExecResult {
 	mut proc := s.start(cmd)!
