@@ -1,4 +1,4 @@
-module ssh2
+module vssh2
 
 import strings
 import time
@@ -21,7 +21,7 @@ fn C.libssh2_channel_wait_eof(channel &C.LIBSSH2_CHANNEL) int
 fn C.libssh2_channel_close(channel &C.LIBSSH2_CHANNEL) int
 fn C.libssh2_channel_wait_closed(channel &C.LIBSSH2_CHANNEL) int
 fn C.libssh2_channel_get_exit_status(channel &C.LIBSSH2_CHANNEL) int
-fn C.libssh2_channel_setenv(channel &C.LIBSSH2_CHANNEL, varname &char, varname_len int, value &char, value_len int) int
+fn C.libssh2_channel_setenv_ex(channel &C.LIBSSH2_CHANNEL, varname &char, varname_len int, value &char, value_len int) int
 fn C.libssh2_channel_set_blocking(channel &C.LIBSSH2_CHANNEL, blocking int)
 fn C.libssh2_channel_request_pty(channel &C.LIBSSH2_CHANNEL, term &char) int
 fn C.libssh2_channel_request_pty_ex(channel &C.LIBSSH2_CHANNEL, term &char, term_len int, modes &char, modes_len int, width int, height int, width_px int, height_px int) int
@@ -31,7 +31,9 @@ fn C.libssh2_channel_flush_ex(channel &C.LIBSSH2_CHANNEL, streamid int) int
 fn C.libssh2_channel_window_read_ex(channel &C.LIBSSH2_CHANNEL, read_avail &int, window_size_initial &int) int
 fn C.libssh2_channel_window_write_ex(channel &C.LIBSSH2_CHANNEL, window_size_initial &int) int
 
-// Stream identifiers for reading/writing
+// Stream identifiers for reading/writing. SSH channel "stream 0" is stdin for
+// writes and stdout for reads; extended data (stderr) is stream 1.
+const stream_stdin = 0
 const stream_stdout = 0
 const stream_stderr = 1
 
@@ -45,7 +47,9 @@ pub struct Channel {
 mut:
 	handle         voidptr = unsafe { nil }
 	session_handle voidptr = unsafe { nil }
-	closed         bool
+	// session is the owning session, used for state checks (nil if unknown).
+	session &Session = unsafe { nil }
+	closed  bool
 	// Per-stream EOF flags tracked by pump().
 	stdout_eof bool
 	stderr_eof bool
@@ -69,15 +73,19 @@ pub mut:
 // Channel lifecycle
 // ------------------------------------------------------------------
 
-// open_session opens a new session channel.
+// open_channel opens a new session channel.
 pub fn (s &Session) open_channel() !&Channel {
+	if isnil(s.handle) {
+		return error('SSH session is closed')
+	}
 	handle := C.libssh2_channel_open_session(s.handle)
 	if unsafe { handle == nil } {
-		return ssh2_error(-1, s)
+		return ssh2_error(s.last_errno(), s)
 	}
 	return &Channel{
 		handle:         handle
 		session_handle: s.handle
+		session:        s
 	}
 }
 
@@ -120,6 +128,11 @@ pub fn (mut ch Channel) pump() !PumpResult {
 		return PumpResult{
 			eof: true
 		}
+	}
+	// In blocking mode a read waits for data, which turns pump() into a
+	// blocking call and makes the "drain whatever is ready" contract a lie.
+	if ch.session != unsafe { nil } && ch.session.is_blocking() {
+		return error('Channel.pump() requires a non-blocking session; use Session.start() or Session.set_blocking(false)')
 	}
 	if ch.read_buf.len == 0 {
 		ch.read_buf = []u8{len: default_read_buffer_size}
@@ -186,6 +199,12 @@ pub fn (mut ch Channel) pump() !PumpResult {
 
 // exec executes a command on the remote host via this channel.
 pub fn (ch &Channel) exec(command string) ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
+	if command == '' {
+		return error('Empty command')
+	}
 	rc := C.libssh2_channel_exec(ch.handle, &char(command.str))
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -194,6 +213,9 @@ pub fn (ch &Channel) exec(command string) ! {
 
 // shell starts a shell on the remote host via this channel.
 pub fn (ch &Channel) shell() ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_shell(ch.handle)
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -202,6 +224,9 @@ pub fn (ch &Channel) shell() ! {
 
 // subsystem requests a subsystem on the remote host (e.g., "sftp").
 pub fn (ch &Channel) subsystem(subsystem_name string) ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_subsystem(ch.handle, &char(subsystem_name.str))
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -215,6 +240,9 @@ pub fn (ch &Channel) subsystem(subsystem_name string) ! {
 // read reads data from the channel's stdout stream.
 // Returns the number of bytes read, or 0 on EOF.
 pub fn (ch &Channel) read(buf []u8) !int {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_read_ex(ch.handle, stream_stdout, buf.data, buf.len)
 	if rc < 0 {
 		return channel_error(rc, ch.session_handle)
@@ -224,6 +252,9 @@ pub fn (ch &Channel) read(buf []u8) !int {
 
 // read_stderr reads data from the channel's stderr stream.
 pub fn (ch &Channel) read_stderr(buf []u8) !int {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_read_ex(ch.handle, stream_stderr, buf.data, buf.len)
 	if rc < 0 {
 		return channel_error(rc, ch.session_handle)
@@ -234,7 +265,10 @@ pub fn (ch &Channel) read_stderr(buf []u8) !int {
 // write writes data to the channel's stdin stream.
 // Returns the number of bytes written.
 pub fn (ch &Channel) write(data []u8) !int {
-	rc := C.libssh2_channel_write_ex(ch.handle, 0, data.data, data.len)
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
+	rc := C.libssh2_channel_write_ex(ch.handle, stream_stdin, data.data, data.len)
 	if rc < 0 {
 		return channel_error(rc, ch.session_handle)
 	}
@@ -250,10 +284,22 @@ pub fn (ch &Channel) write_string(data string) !int {
 // writes (and EAGAIN in non-blocking mode) until every byte has been sent.
 // This matters for payloads larger than one SSH packet.
 pub fn (ch &Channel) write_all(data []u8) ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	mut offset := 0
 	for offset < data.len {
-		rc := C.libssh2_channel_write_ex(ch.handle, stream_stdout, data[offset..].data,
+		rc := C.libssh2_channel_write_ex(ch.handle, stream_stdin, data[offset..].data,
 			data.len - offset)
+		if rc == 0 {
+			// A zero-byte write in blocking mode can never make progress; in
+			// non-blocking mode it means the window is full. Never spin.
+			if ch.session == unsafe { nil } || ch.session.is_blocking() {
+				return error('channel write returned 0 bytes')
+			}
+			time.sleep(1 * time.millisecond)
+			continue
+		}
 		if rc == error_eagain {
 			// Non-blocking session with a full window: yield briefly instead of
 			// spinning. Blocking sessions never hit this path.
@@ -278,6 +324,9 @@ pub fn (ch &Channel) write_string_all(data string) ! {
 
 // send_eof sends an EOF on this channel.
 pub fn (ch &Channel) send_eof() ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_send_eof(ch.handle)
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -285,12 +334,19 @@ pub fn (ch &Channel) send_eof() ! {
 }
 
 // eof returns true if the remote side has sent EOF.
+// A closed channel reports EOF.
 pub fn (ch &Channel) eof() bool {
+	if unsafe { ch.handle == nil } {
+		return true
+	}
 	return C.libssh2_channel_eof(ch.handle) != 0
 }
 
 // wait_eof blocks until the remote side sends EOF.
 pub fn (ch &Channel) wait_eof() ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_wait_eof(ch.handle)
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -299,14 +355,21 @@ pub fn (ch &Channel) wait_eof() ! {
 
 // wait_closed blocks until the channel is closed.
 pub fn (ch &Channel) wait_closed() ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_wait_closed(ch.handle)
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
 	}
 }
 
-// exit_status returns the exit code of the remote command.
+// exit_status returns the exit code of the remote command, or -1 when the
+// status has not been received (or the channel is closed).
 pub fn (ch &Channel) exit_status() int {
+	if unsafe { ch.handle == nil } {
+		return -1
+	}
 	return C.libssh2_channel_get_exit_status(ch.handle)
 }
 
@@ -316,6 +379,9 @@ pub fn (ch &Channel) exit_status() int {
 
 // request_pty requests a pseudo-terminal on this channel.
 pub fn (ch &Channel) request_pty(term string) ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_request_pty(ch.handle, &char(term.str))
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -324,6 +390,9 @@ pub fn (ch &Channel) request_pty(term string) ! {
 
 // request_pty_size requests a pseudo-terminal with specific dimensions.
 pub fn (ch &Channel) request_pty_size(term string, width int, height int) ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_request_pty_ex(ch.handle, &char(term.str), term.len,
 		&char(unsafe { nil }), 0, width, height, 0, 0)
 	if rc != 0 {
@@ -332,8 +401,14 @@ pub fn (ch &Channel) request_pty_size(term string, width int, height int) ! {
 }
 
 // setenv sets an environment variable on the remote channel.
+//
+// NOTE: `libssh2_channel_setenv` in the C header is a 3-argument macro; the
+// wrapper calls the underlying `_ex` function so the lengths are explicit.
 pub fn (ch &Channel) setenv(name string, value string) ! {
-	rc := C.libssh2_channel_setenv(ch.handle, &char(name.str), name.len, &char(value.str),
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
+	rc := C.libssh2_channel_setenv_ex(ch.handle, &char(name.str), name.len, &char(value.str),
 		value.len)
 	if rc != 0 {
 		return channel_error(rc, ch.session_handle)
@@ -346,6 +421,9 @@ pub fn (ch &Channel) setenv(name string, value string) ! {
 
 // flush flushes the channel's stdout stream.
 pub fn (ch &Channel) flush() ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_flush_ex(ch.handle, stream_stdout)
 	if rc < 0 {
 		return channel_error(rc, ch.session_handle)
@@ -354,6 +432,9 @@ pub fn (ch &Channel) flush() ! {
 
 // flush_stderr flushes the channel's stderr stream.
 pub fn (ch &Channel) flush_stderr() ! {
+	if unsafe { ch.handle == nil } {
+		return error('SSH channel is closed')
+	}
 	rc := C.libssh2_channel_flush_ex(ch.handle, stream_stderr)
 	if rc < 0 {
 		return channel_error(rc, ch.session_handle)

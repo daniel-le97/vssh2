@@ -1,34 +1,39 @@
 module main
 
-import ssh2
+import vssh2
 import os
 import time
 
-// Example usage of the ssh2 V wrapper.
+// Example usage of the vssh2 V wrapper.
 // This demonstrates connecting to an SSH server, authenticating, and running commands.
 //
 // To run this example:
 //   SSH_HOST=example.com SSH_USER=user SSH_PASS=password v run .
+//   SSH_PORT=2222 (optional, defaults to 22)
 //
 // Note: libssh2 initializes automatically on import — no manual init/exit needed.
 fn main() {
-	println('Using libssh2 version: ${ssh2.version()}')
+	println('Using libssh2 version: ${vssh2.version()}')
 
 	// Get connection details from environment (or use defaults for demo)
 	host := os.getenv('SSH_HOST')
 	if host == '' {
 		println('Set SSH_HOST, SSH_USER, and SSH_PASS environment variables to run this example.')
 		println('Example: SSH_HOST=example.com SSH_USER=user SSH_PASS=password v run .')
+		println('Optional: SSH_PORT (default 22).')
 		return
 	}
 
 	user := os.getenv('SSH_USER')
 	pass := os.getenv('SSH_PASS')
+	port := os.getenv('SSH_PORT').int()
 
-	// Connect, handshake, and authenticate in one call
-	session := ssh2.connect_to(ssh2.ConnectConfig{
+	// Connect, handshake, and authenticate in one call.
+	// For production use, also set `host_key_mode: .strict` (or `.accept_new`)
+	// and a `known_hosts_file`.
+	session := vssh2.connect_to(vssh2.ConnectConfig{
 		host:       host
-		port:       22
+		port:       if port > 0 { port } else { 22 }
 		username:   user
 		password:   pass
 		timeout_ms: 10000

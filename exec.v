@@ -1,4 +1,4 @@
-module ssh2
+module vssh2
 
 import strings
 import time
@@ -217,7 +217,8 @@ pub fn (s &Session) run_timeout(cmd string, idle_timeout_ms int) !ExecResult {
 }
 
 // run_stream executes `cmd` and calls `on_output` with output chunks as they
-// arrive, for both stdout and stderr, in arrival order.
+// arrive, for both stdout and stderr (a `pump()` call delivers stdout first,
+// then stderr).
 //
 // `on_output` must be a plain, stateless function: V drops closure state at the
 // `fn (...)` boundary, so pass a `ChunkSink` to `run_sink` or use `start()` when
@@ -332,14 +333,20 @@ fn (s &Session) exec_core(cmd string, idle_timeout_ms int, mut out_sink ChunkSin
 		}
 	}
 
+	stdout := out_sb.str()
+	stderr := err_sb.str()
+	if stream_error.len > 0 {
+		// The transport failed mid-command. Never report partial output as a
+		// successful run, and do not wait for EOF on a broken connection (that
+		// can block until the session timeout).
+		proc.kill()
+		completed = true
+		return error('SSH command failed after ${stdout.len} bytes of stdout and ${stderr.len} bytes of stderr: ${stream_error}')
+	}
+
 	exit_code := proc.finish()!
 	completed = true
 
-	stdout := out_sb.str()
-	stderr := err_sb.str()
-	if stream_error.len > 0 && stdout.len == 0 && stderr.len == 0 {
-		return error('SSH command failed: ${stream_error}')
-	}
 	return ExecResult{
 		exit_code: exit_code
 		stdout:    stdout

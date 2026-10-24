@@ -1,6 +1,7 @@
 # Binaries for programs and plugins
 main
 ssh2
+vssh2
 *.exe
 *.exe~
 *.so
@@ -29,3 +30,6 @@ modules/
 .build*
 
 build
+
+# V compiler temp artifacts from failed compiles
+..v3_inline_*

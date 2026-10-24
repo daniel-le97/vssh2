@@ -1,4 +1,4 @@
-module ssh2
+module vssh2
 
 import net
 import os
@@ -26,14 +26,17 @@ pub enum HostKeyMode {
 // ConnectConfig holds the configuration for an SSH connection.
 pub struct ConnectConfig {
 pub:
-	host               string = 'localhost'
-	port               int    = 22
-	username           string
-	password           string
-	privkey_file       string // path to private key file
-	pubkey_file        string // path to public key file (optional when using privkey)
-	passphrase         string // passphrase for private key
-	timeout_ms         int = 10000
+	host         string = 'localhost'
+	port         int    = 22
+	username     string
+	password     string
+	privkey_file string // path to private key file
+	pubkey_file  string // path to public key file (optional when using privkey)
+	passphrase   string // passphrase for private key
+	timeout_ms   int = 10000
+	// keepalive_interval configures libssh2's keepalive interval in seconds
+	// (0 = disabled). libssh2 only sends a probe when `send_keepalive()` is
+	// called, so callers must invoke it periodically (on the same thread).
 	keepalive_interval int // 0 = disabled
 	// host_key_mode controls host key verification. `.ignore` (the default)
 	// preserves the historical behaviour of this module; set `.accept_new` or
@@ -45,15 +48,32 @@ pub:
 }
 
 // known_hosts_path resolves the known_hosts file to use for verification.
+// A leading `~` is expanded, so `'~/.ssh/known_hosts'` works as documented.
 fn (config ConnectConfig) known_hosts_path() string {
 	if config.known_hosts_file.len > 0 {
-		return config.known_hosts_file
+		return os.expand_tilde_to_home(config.known_hosts_file)
 	}
 	home := os.home_dir()
 	if home.len == 0 {
 		return ''
 	}
 	return os.join_path(home, '.ssh', 'known_hosts')
+}
+
+// expand_path expands a leading `~` in a user-supplied file path.
+fn expand_path(path string) string {
+	if path == '' {
+		return ''
+	}
+	return os.expand_tilde_to_home(path)
+}
+
+// dial_address formats `host:port`, bracketing bare IPv6 literals.
+fn dial_address(host string, port int) string {
+	if host.contains(':') && !host.starts_with('[') {
+		return '[${host}]:${port}'
+	}
+	return '${host}:${port}'
 }
 
 // connect_to establishes an SSH connection to a remote host using the
@@ -66,11 +86,11 @@ fn (config ConnectConfig) known_hosts_path() string {
 //
 // Example:
 // ```v
-// import ssh2
+// import vssh2
 //
 // fn main() {
 //     // libssh2 initializes automatically on import
-//     session := ssh2.connect_to(ssh2.ConnectConfig{
+//     session := vssh2.connect_to(vssh2.ConnectConfig{
 //         host: 'example.com'
 //         username: 'user'
 //         password: 'password'
@@ -81,6 +101,12 @@ fn (config ConnectConfig) known_hosts_path() string {
 pub fn connect_to(config ConnectConfig) !&Session {
 	if config.username.len == 0 {
 		return error('SSH username is required')
+	}
+	if config.host.len == 0 {
+		return error('SSH host is required')
+	}
+	if config.port < 1 || config.port > 65535 {
+		return error('Invalid SSH port: ${config.port}')
 	}
 
 	// Create a new session
@@ -95,7 +121,7 @@ pub fn connect_to(config ConnectConfig) !&Session {
 	session.set_blocking(true)
 
 	// Connect the TCP socket
-	address := '${config.host}:${config.port}'
+	address := dial_address(config.host, config.port)
 	socket := net.dial_tcp(address) or {
 		session.close()
 		return error('TCP connection to ${address} failed: ${err}')
@@ -146,8 +172,8 @@ fn authenticate(session &Session, config ConnectConfig) ! {
 		// NOTE: an empty `pubkey_file` must be passed through as NULL. libssh2
 		// treats a non-NULL empty string as a filename and fails with
 		// "Unable to open public key file" (see auth.v).
-		return session.auth_publickey_fromfile(config.username, config.pubkey_file,
-			config.privkey_file, config.passphrase)
+		return session.auth_publickey_fromfile(config.username, expand_path(config.pubkey_file),
+			expand_path(config.privkey_file), config.passphrase)
 	}
 	return error('No authentication method provided (set `password` or `privkey_file`)')
 }
@@ -157,14 +183,10 @@ fn verify_host(session &Session, config ConnectConfig) ! {
 	if config.host_key_mode == .ignore {
 		return
 	}
-	if config.host_key_mode == .strict && config.known_hosts_file.len == 0 {
-		// Verification against the default file is still fine; only complain when
-		// there is nowhere to read keys from at all.
-		if config.known_hosts_path().len == 0 {
-			return error('Host key verification is enabled but no known_hosts file could be resolved')
-		}
-	}
 	path := config.known_hosts_path()
+	if path.len == 0 {
+		return error('Host key verification is enabled but no known_hosts file could be resolved')
+	}
 	result := session.verify_host_key(config.host, config.port, path,
 		config.host_key_mode == .accept_new)!
 	host_port := '${config.host}:${config.port}'

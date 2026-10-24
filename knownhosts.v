@@ -1,4 +1,4 @@
-module ssh2
+module vssh2
 
 import os
 
@@ -10,7 +10,6 @@ fn C.libssh2_knownhost_init(session &C.LIBSSH2_SESSION) &C.LIBSSH2_KNOWNHOSTS
 fn C.libssh2_knownhost_free(knownhosts &C.LIBSSH2_KNOWNHOSTS)
 fn C.libssh2_knownhost_readfile(knownhosts &C.LIBSSH2_KNOWNHOSTS, filename &char, typ int) int
 fn C.libssh2_knownhost_writefile(knownhosts &C.LIBSSH2_KNOWNHOSTS, filename &char, typ int) int
-fn C.libssh2_knownhost_readline(knownhosts &C.LIBSSH2_KNOWNHOSTS, line &char, line_len usize, host &C.LIBSSH2_KNOWNHOST, typ int) int
 fn C.libssh2_knownhost_writeline(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &C.LIBSSH2_KNOWNHOST, buf voidptr, buflen usize, outlen &usize, typ int) int
 fn C.libssh2_knownhost_addc(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &char, salt &char, key &char, keylen usize, comment &char, commentlen usize, typemask int, store voidptr) int
 fn C.libssh2_knownhost_checkp(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &char, port int, key &char, keylen usize, typemask int, knownhost voidptr) int
@@ -36,13 +35,18 @@ pub enum KnownHostCheckResult {
 }
 
 // KnownHosts manages known hosts for SSH server verification.
+@[heap]
 pub struct KnownHosts {
-	handle  voidptr = unsafe { nil }
-	session &Session
+mut:
+	handle  voidptr  = unsafe { nil }
+	session &Session = unsafe { nil }
 }
 
 // new_knownhosts creates a new known hosts store for the given session.
 pub fn (s &Session) new_knownhosts() !&KnownHosts {
+	if isnil(s.handle) {
+		return error('SSH session is closed')
+	}
 	handle := C.libssh2_knownhost_init(s.handle)
 	if unsafe { handle == nil } {
 		return error('Failed to initialize known hosts store')
@@ -53,10 +57,11 @@ pub fn (s &Session) new_knownhosts() !&KnownHosts {
 	}
 }
 
-// close frees the known hosts store.
-pub fn (kh &KnownHosts) close() {
+// close frees the known hosts store. Calling it twice is safe.
+pub fn (mut kh KnownHosts) close() {
 	if unsafe { kh.handle != nil } {
 		C.libssh2_knownhost_free(kh.handle)
+		kh.handle = unsafe { nil }
 	}
 }
 
@@ -118,17 +123,17 @@ pub fn (kh &KnownHosts) check_host(host string, port int, key []u8, typemask int
 // `StrictHostKeyChecking=accept-new`. When it is false, unknown hosts return
 // `KnownHostCheckResult.not_found` and callers should refuse to continue.
 pub fn (s &Session) verify_host_key(host string, port int, known_hosts_file string, add_if_missing bool) !KnownHostCheckResult {
-	key, _key_len, key_type := s.hostkey()
+	key, _, key_type := s.hostkey()
 	if key.len == 0 {
 		return error('SSH server did not present a host key')
 	}
-	if known_hosts_file.len == 0 {
+	if known_hosts_file == '' {
 		return error('No known_hosts file given for host key verification')
 	}
 
 	typemask := knownhost_type_plain | knownhost_keyenc_raw | knownhost_key_flag(key_type)
 
-	kh := s.new_knownhosts()!
+	mut kh := s.new_knownhosts()!
 	defer {
 		kh.close()
 	}

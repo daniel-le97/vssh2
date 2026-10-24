@@ -1,6 +1,6 @@
 #!/usr/bin/env -S v run
 
-// build.vsh — Build, test, and maintain the ssh2 V module
+// build.vsh — Build, test, and maintain the vssh2 V module
 //
 // Usage:
 //   v run build.vsh              # runs the default task (check)
@@ -22,7 +22,7 @@ import time
 import v.vmod
 import semver
 
-const project_name = 'ssh2'
+const project_name = 'vssh2'
 
 const color_green = '\x1b[32m'
 const color_yellow = '\x1b[33m'
@@ -39,15 +39,15 @@ fn check_docker() ! {
 }
 
 fn info(msg string) {
-	println('${color_green}[ssh2]${color_reset} ${msg}')
+	println('${color_green}[vssh2]${color_reset} ${msg}')
 }
 
 fn warn(msg string) {
-	println('${color_yellow}[ssh2]${color_reset} ${msg}')
+	println('${color_yellow}[vssh2]${color_reset} ${msg}')
 }
 
 fn print_error(msg string) {
-	println('${color_red}[ssh2]${color_reset} ${msg}')
+	println('${color_red}[vssh2]${color_reset} ${msg}')
 }
 
 fn command_exists(cmd string) bool {
@@ -57,6 +57,12 @@ fn command_exists(cmd string) bool {
 
 fn have_pkg_config() bool {
 	return command_exists('pkg-config')
+}
+// module_search_path keeps the default V module roots and adds the directory
+// that contains this repository, so `examples/main.v` can `import vssh2` from a
+// plain clone (without `v install` or a ~/.vmodules symlink).
+fn module_search_path() string {
+	return '@vlib|@vmodules|' + os.dir(os.getwd())
 }
 
 fn libssh2_found() bool {
@@ -190,7 +196,11 @@ ctx.task(
 	help:    'Compile the project'
 	depends: ['fmt.check']
 	run:     fn (t build.Task) ! {
-		result := os.exec(['v', 'examples/main.v'])
+		// Compile only (not `v examples/main.v`, which would also run it) into
+		// the gitignored bin/ directory.
+		os.mkdir_all('bin') or {}
+		result := os.exec(['v', '-path', module_search_path(), '-o', 'bin/vssh2-example',
+			'examples/main.v'])
 		if result.exit_code != 0 {
 			return error('build failed')
 		}
@@ -204,7 +214,8 @@ ctx.task(
 	help:    'Compile in production mode'
 	depends: ['fmt.check']
 	run:     fn (t build.Task) ! {
-		result := os.exec(['v', '-prod', '-o', project_name, 'examples/main.v'])
+		result := os.exec(['v', '-path', module_search_path(), '-prod', '-o', project_name,
+			'examples/main.v'])
 		if result.exit_code != 0 {
 			return error('production build failed')
 		}
@@ -218,7 +229,8 @@ ctx.task(
 	help:    'Run unit tests (no server required)'
 	depends: ['fmt.check']
 	run:     fn (t build.Task) ! {
-		result := os.exec(['v', 'test', 'examples'])
+		// The tests live next to the module (`vssh2_test.v`), not in examples/.
+		result := os.exec(['v', 'test', '.'])
 		if result.exit_code != 0 {
 			return error('tests failed')
 		}
@@ -236,7 +248,7 @@ ctx.task(
 			println('Skipping integration tests — set SSH2_TEST_HOST, SSH2_TEST_USER, SSH2_TEST_PASS')
 			return
 		}
-		result := os.exec(['v', 'test', 'examples'])
+		result := os.exec(['v', 'test', '.'])
 		if result.exit_code != 0 {
 			return error('integration tests failed')
 		}
@@ -275,10 +287,10 @@ ctx.task(
 	name: 'clean'
 	help: 'Remove build artifacts'
 	run:  fn (t build.Task) ! {
-		artifacts := ['ssh2', project_name, 'bin/', 'modules/']
+		artifacts := ['bin', project_name, 'build']
 		for a in artifacts {
 			if os.exists(a) {
-				os.rm(a) or { continue }
+				os.rmdir_all(a) or { os.rm(a) or { continue } }
 				println('  removed: ${a}')
 			}
 		}
@@ -475,7 +487,8 @@ ctx.task(
 			return error('release: checks failed, version reverted')
 		}
 		// Production build
-		result2 := os.exec(['v', '-prod', '-o', project_name, 'examples/main.v'])
+		result2 := os.exec(['v', '-path', module_search_path(), '-prod', '-o', project_name,
+			'examples/main.v'])
 		if result2.exit_code != 0 {
 			manifest.version = v.str()
 			os.write_file('v.mod', vmod.encode(manifest))!

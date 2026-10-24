@@ -1,6 +1,6 @@
 // Copyright (c) 2024
 // Licensed under MIT License.
-// ssh2 - A V language wrapper for libssh2.
+// vssh2 - A V language wrapper for libssh2.
 //
 // This module provides a pure V interface to libssh2, allowing users
 // to work with SSH connections, authentication, channels, and SFTP
@@ -23,7 +23,7 @@
 //   Alpine:       sudo apk add libssh2-dev
 //
 
-module ssh2
+module vssh2
 
 // #flag and #include directives for linking libssh2
 // Uses pkg-config for portable library discovery across macOS, Linux, etc.
@@ -54,10 +54,6 @@ struct C.LIBSSH2_KNOWNHOSTS {}
 @[typedef]
 struct C.LIBSSH2_KNOWNHOST {}
 
-// Library constants
-// Version string for the wrapped libssh2
-const libssh2_version_string = 'libssh2'
-
 // Default buffer sizes
 pub const default_read_buffer_size = 32768
 pub const default_write_buffer_size = 4096
@@ -87,10 +83,13 @@ pub:
 	message string
 }
 
+// str returns a printable representation including the numeric error code.
 pub fn (e Ssh2Error) str() string {
 	return 'Ssh2Error(${e.code}): ${e.message}'
 }
 
+// err is an alias for `str`, so `Ssh2Error` satisfies interfaces that expect
+// an `err()` method as well as V's standard `IError`.
 pub fn (e Ssh2Error) err() string {
 	return e.str()
 }

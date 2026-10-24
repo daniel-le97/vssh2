@@ -1,4 +1,4 @@
-# ssh2 - V Language Wrapper for libssh2
+# vssh2 - V Language Wrapper for libssh2
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -38,26 +38,30 @@ Or install manually:
 ## Installation
 
 ```bash
-# Via vpm:
-v install ssh2
+# Via vpm (install by repository, not by module name):
+v install daniel-le97/vssh2
 
 # Or clone locally:
 git clone https://github.com/daniel-le97/vssh2
 cd vssh2
 v run build.vsh setup   # installs libssh2 if missing
-v build .
+v run build.vsh check   # fmt + compile + tests
 ```
+
+> This repository is a **library module**, so `v build .` does not produce a
+> binary. Use `v run build.vsh build` to compile the example app
+> (`bin/vssh2-example`).
 
 ## Quick Start
 
 ### Password Authentication
 
 ```v
-import ssh2
+import vssh2
 
 fn main() {
 	// libssh2 initializes automatically — no init/exit needed
-	session := ssh2.connect_to(ssh2.ConnectConfig{
+	session := vssh2.connect_to(vssh2.ConnectConfig{
 		host: 'example.com'
 		port: 22
 		username: 'user'
@@ -74,10 +78,10 @@ fn main() {
 ### Public Key Authentication
 
 ```v
-import ssh2
+import vssh2
 
 fn main() {
-	session := ssh2.connect_to(ssh2.ConnectConfig{
+	session := vssh2.connect_to(vssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
 		privkey_file: os.expand_tilde_to_home('~/.ssh/id_rsa')
@@ -93,23 +97,24 @@ fn main() {
 ### Manual Step-by-Step Connection
 
 ```v
-import ssh2
+import vssh2
 import net
 
 fn main() {
 	// libssh2 initializes automatically
 
 	// 1. Create session
-	session := ssh2.new_session() or { panic(err) }
+	session := vssh2.new_session() or { panic(err) }
 	defer { session.close() }
 
 	session.set_timeout(5000)
 
 	// 2. Connect TCP socket
 	mut socket := net.dial_tcp('example.com:22') or { panic(err) }
+	defer { socket.close() or {} }
 
-	// 3. SSH handshake
-	session.connect(socket.sock.fd) or { panic(err) }
+	// 3. SSH handshake (the session does NOT own this socket)
+	session.connect(socket.sock.handle) or { panic(err) }
 
 	// 4. Authenticate
 	session.auth_password('user', 'password') or { panic(err) }
@@ -131,10 +136,10 @@ fn main() {
 ### SFTP File Transfer
 
 ```v
-import ssh2
+import vssh2
 
 fn main() {
-	session := ssh2.connect_to(ssh2.ConnectConfig{
+	session := vssh2.connect_to(vssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
 		password: 'password'
@@ -157,10 +162,10 @@ fn main() {
 ### Interactive Shell
 
 ```v
-import ssh2
+import vssh2
 
 fn main() {
-	session := ssh2.connect_to(ssh2.ConnectConfig{
+	session := vssh2.connect_to(vssh2.ConnectConfig{
 		host: 'example.com'
 		username: 'user'
 		password: 'password'
@@ -192,11 +197,11 @@ you the running command so you can consume output as it arrives — useful for
 build logs and progress bars:
 
 ```v
-import ssh2
+import vssh2
 import time
 
 fn main() {
-	mut session := ssh2.connect_to(ssh2.ConnectConfig{
+	mut session := vssh2.connect_to(vssh2.ConnectConfig{
 		host:         'example.com'
 		username:     'user'
 		privkey_file: os.expand_tilde_to_home('~/.ssh/id_ed25519')
@@ -258,7 +263,7 @@ Host key verification is **opt-in** and defaults to `.ignore`, which keeps the
 historical behaviour of this module. Turn it on for anything production-like:
 
 ```v
-session := ssh2.connect_to(ssh2.ConnectConfig{
+session := vssh2.connect_to(vssh2.ConnectConfig{
 	host:             'example.com'
 	username:         'deploy'
 	privkey_file:     '~/.ssh/id_ed25519'
@@ -277,9 +282,10 @@ always rejected.
 
 | Function / Method | Description |
 |---|---|
-| `ssh2.version()` | Get libssh2 version string |
-| `ssh2.strerror(code)` | Describe a libssh2 error code |
-| `ssh2.connect_to(config)` | High-level connect, verify & authenticate |
+| `vssh2.version()` | Get libssh2 version string |
+| `vssh2.strerror(code)` | Describe a libssh2 error code |
+| `vssh2.sftp_strerror(code)` | Describe a `LIBSSH2_FX_*` SFTP status code |
+| `vssh2.connect_to(config)` | High-level connect, verify & authenticate |
 | `session.connect(fd)` | Perform SSH handshake over your own socket |
 | `session.auth_password(u, p)` | Password authentication |
 | `session.auth_publickey_fromfile(...)` | Public key authentication from files |
@@ -305,6 +311,8 @@ always rejected.
 | `channel.shell()` | Start a shell |
 | `ch.read(buf)` / `ch.write(data)` | Read/write channel data |
 | `sftp.open(path, flags, mode)` | Open a remote file |
+| `fh.read(buf)` / `fh.write(data)` | Read/write an open file (partial writes possible) |
+| `fh.stat()` | fstat an open file handle |
 | `sftp.read_file(path)` | Read entire remote file |
 | `sftp.write_file(path, data)` | Write entire local file |
 | `sftp.list_dir(path)` | List a remote directory |
@@ -322,7 +330,15 @@ always rejected.
 ### Unit tests (no server required):
 ```bash
 v test .
+# or, as part of the full gate:
+v run build.vsh check
 ```
+
+The unit tests include a **compile-only API sweep** (`api_sweep`) that references
+every public entry point. V dead-code-eliminates unused functions in an
+executable, so without this gate an ABI mistake in a rarely used function
+(e.g. a C macro called with the wrong arity) would only be discovered by users.
+Run it for real with `SSH2_API_SWEEP=1 v test .`.
 
 ### Integration tests (requires SSH server):
 ```bash
@@ -339,12 +355,42 @@ SSH2_TEST_PORT=22 \
 SSH2_TEST_USER=testuser \
 SSH2_TEST_KEY=~/.ssh/id_ed25519 \
 v test .
+
+# starts a throwaway container, runs everything, then removes it
+v run build.vsh docker.test
 ```
+
+`SSH2_TEST_PORT` defaults to `22` when unset. Tests that need
+`SSH2_TEST_KEY`/`SSH2_TEST_HOST` are skipped automatically.
 
 The key-based tests intentionally do **not** set `pubkey_file`: libssh2 treats an
 empty public key path as a filename and fails with "Unable to open public key
 file", so this covers the regression where key authentication was broken when
 no `.pub` file was supplied.
+
+## Production Notes
+
+- **Host key verification is opt-in.** The default is `HostKeyMode.ignore` for
+  backwards compatibility; any deployment that talks to a network you do not
+  fully control should set `.strict` (with a managed known_hosts file) or
+  `.accept_new` (TOFU). A changed key is always rejected.
+- **Lifecycle order.** Close channels, `ExecProcess`es and SFTP sessions
+  **before** `session.close()`. Closing the session frees the libssh2 session
+  that those handles belong to. `close()` is idempotent, so `defer` is safe.
+- **Thread safety.** libssh2 is not thread-safe per session. Use one session per
+  goroutine; do not call `send_keepalive()` from another thread.
+- **Keepalive.** `configure_keepalive()` only configures the interval; libssh2
+  never sends probes on its own. Call `session.send_keepalive()` periodically
+  (it returns the seconds until the next probe is due).
+- **`Channel.pump()` requires a non-blocking session.** `Session.start()`
+  switches the session automatically; if you drive a channel manually, call
+  `session.set_blocking(false)` first. In blocking mode `pump()` returns an
+  error rather than silently blocking.
+- **SFTP flags** follow `LIBSSH2_FXF_*`: `READ=0x01`, `WRITE=0x02`, `APPEND=0x04`,
+  `CREATE=0x08`, `TRUNC=0x10`, `EXCL=0x20`.
+- **Error propagation.** `run()`/`run_sink()`/`read_file()`/`write_file()` return
+  an error if the transport fails mid-operation; partial output is never
+  reported as success.
 
 ## Notes
 
@@ -361,14 +407,14 @@ no `.pub` file was supplied.
 - **`#include` directives**: All C `#include` directives (`<libssh2.h>`,
   `<libssh2_sftp.h>`) are consolidated in `ssh2.v` only — no other file contains
   `#include`. This avoids V compiler errors about duplicate `#include` across module files.
-- **Example & test files**: Moved to `examples/` directory with `module main` so they don't interfere when the module is used as a dependency. Run them with `v run examples/main.v`.
-- **Dependency setup**: The symlink `~/.vmodules/ssh2 → <repo>` is required for `v.mod` dependency resolution when used in other projects. Create it with `ln -sf $(pwd) ~/.vmodules/ssh2`.
+- **Example file**: `examples/main.v` is `module main` so it does not interfere when the module is used as a dependency. Build it with `v run build.vsh build`; to run it directly use `v run examples/main.v` after installing the module (`v install daniel-le97/vssh2`).
+- **Module name matches the repository**: the directory must be named `vssh2` to match `module vssh2`. `v install daniel-le97/vssh2` handles this automatically; for a local checkout, link it as `ln -sf $(pwd) ~/.vmodules/vssh2`.
 - **Platforms**: POSIX (Linux/macOS). libssh2 is discovered with `pkg-config`.
 
 ## Project Structure
 
 ```
-ssh2/
+vssh2/
 ├── ssh2.v          # Module init, exit, error codes, core types
 ├── session.v       # Session management, socket ownership, keepalive
 ├── auth.v          # Authentication methods
@@ -377,13 +423,13 @@ ssh2/
 ├── connect.v       # High-level connection helper + host key policy
 ├── knownhosts.v    # Known hosts verification
 ├── sftp.v          # SFTP file operations
+├── vssh2_test.v    # Unit + integration tests (and the API compile sweep)
 ├── build.vsh       # Build system + dependency installer (list tasks: `v run build.vsh help`)
 ├── v.mod           # Module definition
-├── LICENSE          # MIT license
+├── LICENSE         # MIT license
 ├── README.md       # This file
 └── examples/
-    ├── main.v      # Example usage (password & public key auth)
-    └── ssh2_test.v # Unit & integration tests
+    └── main.v      # Example usage (password & public key auth, streaming)
 ```
 
 ## License

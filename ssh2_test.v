@@ -1,4 +1,4 @@
-module ssh2
+module vssh2
 
 import os
 import time
@@ -73,9 +73,7 @@ fn test_session_timeout() {
 	}
 
 	session.set_timeout(5000)
-	timeout := session.timeout()
-	// Just verify it doesn't crash
-	assert true
+	assert session.timeout() == 5000
 }
 
 fn test_parse_auth_methods() {
@@ -116,11 +114,208 @@ fn test_sftp_attrs_conversion() {
 }
 
 fn test_sftp_open_flags() {
-	read_write := sftp_open_flag_read | sftp_open_flag_write
-	assert read_write == (0x00000001 | 0x00000002)
+	// These must match LIBSSH2_FXF_* in <libssh2_sftp.h>. They were previously
+	// shifted by one bit, which made write_file() open with WRITE|TRUNC|EXCL
+	// (no CREAT) and fail on every call.
+	assert sftp_open_flag_read == 0x01
+	assert sftp_open_flag_write == 0x02
+	assert sftp_open_flag_append == 0x04
+	assert sftp_open_flag_create == 0x08
+	assert sftp_open_flag_trunc == 0x10
+	assert sftp_open_flag_excl == 0x20
 
-	create_trunc := sftp_open_flag_create | sftp_open_flag_trunc
-	assert create_trunc == (0x00000010 | 0x00000020)
+	read_write := sftp_open_flag_read | sftp_open_flag_write
+	assert read_write == 0x03
+
+	// The combination used by write_file(): create + truncate an existing file.
+	create_trunc := sftp_open_flag_write | sftp_open_flag_create | sftp_open_flag_trunc
+	assert create_trunc == 0x1a
+	assert create_trunc & sftp_open_flag_create != 0
+}
+
+fn test_sftp_strerror() {
+	assert sftp_strerror(sftp_fx_ok) == 'success'
+	assert sftp_strerror(sftp_fx_no_such_file) == 'no such file'
+	assert sftp_strerror(sftp_fx_permission_denied) == 'permission denied'
+	assert sftp_strerror(sftp_fx_dir_not_empty) == 'directory not empty'
+	assert sftp_strerror(u64(999)) == 'SFTP error 999'
+	// SFTP status codes are a different namespace from LIBSSH2_ERROR_*.
+	assert sftp_fx_no_such_file == 2
+	assert error_eagain == -37
+}
+
+fn test_dial_address_formats() {
+	assert dial_address('example.com', 22) == 'example.com:22'
+	assert dial_address('127.0.0.1', 2222) == '127.0.0.1:2222'
+	// Bare IPv6 literals must be bracketed or the port is misparsed.
+	assert dial_address('::1', 22) == '[::1]:22'
+	assert dial_address('[::1]', 22) == '[::1]:22'
+}
+
+fn test_known_hosts_tilde_expansion() {
+	config := ConnectConfig{
+		host_key_mode:    .accept_new
+		known_hosts_file: '~/.ssh/known_hosts'
+	}
+	path := config.known_hosts_path()
+	assert !path.starts_with('~')
+	assert path.ends_with('known_hosts')
+
+	// Explicit paths are left alone (except for `~`).
+	explicit := ConnectConfig{
+		known_hosts_file: '/etc/ssh/ssh_known_hosts'
+	}
+	assert explicit.known_hosts_path() == '/etc/ssh/ssh_known_hosts'
+}
+
+fn test_closed_session_is_safe() {
+	mut session := new_session() or { return }
+	session.close()
+	assert session.is_closed()
+	// Every accessor must tolerate a freed handle instead of calling into C.
+	assert !session.is_authenticated()
+	assert !session.is_blocking()
+	assert session.last_errno() == error_socket_none
+	code, _ := session.last_error()
+	assert code == error_socket_none
+	assert session.banner() == ''
+	assert session.method(.kex) == ''
+	key, key_len, key_type := session.hostkey()
+	assert key.len == 0 && key_len == 0 && key_type == 0
+	assert session.block_directions() == 0
+	if _ := session.send_keepalive() {
+		assert false, 'send_keepalive on a closed session must fail'
+	}
+	if _ := session.open_channel() {
+		assert false, 'open_channel on a closed session must fail'
+	}
+	if _ := session.init_sftp() {
+		assert false, 'init_sftp on a closed session must fail'
+	}
+	if _ := session.auth_password('u', 'p') {
+		assert false, 'auth on a closed session must fail'
+	}
+}
+
+// ------------------------------------------------------------------
+// Compile-only API sweep
+// ------------------------------------------------------------------
+// V dead-code-eliminates unreachable functions in an executable, so `v test .`
+// used to skip C codegen for most of the public API. That hid real ABI bugs
+// (wrong macro arity for setenv/setstat, wrong keyboard-interactive struct
+// names, macro-vs-function mismatches) until a user called the function.
+// Referencing every entry point from a test forces the full module through the
+// C compiler on every test run.
+fn test_public_api_surface_compiles() {
+	if os.getenv('SSH2_API_SWEEP') == '' {
+		return
+	}
+	api_sweep()
+}
+
+fn api_sweep() {
+	mut s := &Session{}
+	s.set_blocking(true)
+	_ = s.is_blocking()
+	s.set_timeout(1000)
+	_ = s.timeout()
+	s.configure_keepalive(true, 30)
+	_ = s.send_keepalive() or { 0 }
+	_ = s.block_directions()
+	_ = s.banner()
+	s.set_banner('sweep') or {}
+	_ = s.method(.kex)
+	_, _, _ := s.hostkey()
+	_ = s.last_errno()
+	_, _ := s.last_error()
+	_ = s.is_closed()
+	_ = s.is_authenticated()
+	s.auth_password('u', 'p') or {}
+	s.auth_publickey_fromfile('u', '', 'k', '') or {}
+	s.auth_publickey_frommemory('u', []u8{}, []u8{len: 1}, '') or {}
+	s.auth_hostbased_fromfile('u', 'h', 'u', 'pub', 'priv', '') or {}
+	s.auth_keyboard_interactive('u', fn (questions []string, _ []bool) []string {
+		return []string{len: questions.len, init: ''}
+	}) or {}
+	_ = s.auth_list('u') or { []AuthMethod{} }
+
+	if sftp := s.init_sftp() {
+		_ = sftp.exists('/x')
+		_ = sftp.stat('/x') or { SftpAttrs{} }
+		_ = sftp.lstat('/x') or { SftpAttrs{} }
+		sftp.chmod('/x', 0o644) or {}
+		sftp.setstat('/x', &SftpAttrs{}) or {}
+		sftp.mkdir('/x', 0o755) or {}
+		sftp.rmdir('/x') or {}
+		sftp.unlink('/x') or {}
+		sftp.rename('/x', '/y') or {}
+		_ = sftp.realpath('/x') or { '' }
+		_ = sftp.readlink('/x') or { '' }
+		_ = sftp.list_dir('/x') or { []SftpFile{} }
+		_ = sftp.read_file('/x') or { []u8{} }
+		sftp.write_file('/x', 'd'.bytes()) or {}
+		if fh := sftp.open('/x', sftp_open_flag_read, 0o644) {
+			_ = fh.read([]u8{len: 8}) or { 0 }
+			_ = fh.write([]u8{len: 8}) or { 0 }
+			_ = fh.stat() or { SftpAttrs{} }
+			fh.close()
+		}
+		sftp.close()
+	}
+
+	if mut kh := s.new_knownhosts() {
+		kh.read_file('/x', knownhost_file_format_openssh) or {}
+		kh.write_file('/x', knownhost_file_format_openssh) or {}
+		kh.add_host('h', []u8{}, 0) or {}
+		_ = kh.check_host('h', 22, []u8{}, 0) or { KnownHostCheckResult.failure }
+		kh.close()
+	}
+
+	_ = s.verify_host_key('h', 22, '/x', false) or { KnownHostCheckResult.failure }
+
+	if mut ch := s.open_channel() {
+		ch.exec('true') or {}
+		ch.setenv('A', 'B') or {}
+		ch.request_pty('xterm') or {}
+		ch.request_pty_size('xterm', 80, 24) or {}
+		ch.shell() or {}
+		ch.subsystem('sftp') or {}
+		_ = ch.read([]u8{len: 8}) or { 0 }
+		_ = ch.read_stderr([]u8{len: 8}) or { 0 }
+		_ = ch.write([]u8{len: 8}) or { 0 }
+		_ = ch.write_string('x') or { 0 }
+		ch.write_all([]u8{len: 8}) or {}
+		ch.write_string_all('x') or {}
+		ch.send_eof() or {}
+		_ = ch.eof()
+		ch.wait_eof() or {}
+		ch.wait_closed() or {}
+		_ = ch.exit_status()
+		ch.flush() or {}
+		ch.flush_stderr() or {}
+		_ = ch.pump() or { PumpResult{} }
+		ch.close()
+	}
+
+	if mut proc := s.start('true') {
+		_ = proc.pump() or { PumpResult{} }
+		_ = proc.finish() or { -1 }
+		_ = proc.exit_code()
+		proc.kill()
+	}
+
+	_, _ = s.exec_and_read('true') or { '', '' }
+	_ = s.run('true') or { ExecResult{} }
+	_ = s.run_timeout('true', 100) or { ExecResult{} }
+	_ = s.run_stream('true', fn (_ string) {}) or { ExecResult{} }
+	_ = s.run_stream_timeout('true', fn (_ string) {}, 100) or { ExecResult{} }
+	_ = s.run_stream_split('true', fn (_ string) {}, fn (_ string) {}) or { ExecResult{} }
+	mut sink := DiscardSink{}
+	_ = s.run_sink('true', mut sink) or { ExecResult{} }
+	_ = s.run_sink_timeout('true', mut sink, 100) or { ExecResult{} }
+
+	s.disconnect('bye') or {}
+	s.close()
 }
 
 fn test_sftp_file_type_values() {
@@ -212,6 +407,13 @@ fn test_connect_config_host_key_defaults() {
 // Example:
 //   SSH2_TEST_HOST=localhost SSH2_TEST_USER=test SSH2_TEST_PASS=test v test .
 
+// env_test_port returns SSH2_TEST_PORT, defaulting to 22. A struct literal sets
+// the field to 0 when the env var is missing, which would dial port 0.
+fn env_test_port() int {
+	port := os.getenv('SSH2_TEST_PORT').int()
+	return if port > 0 { port } else { 22 }
+}
+
 fn ssh_test_config() ?ConnectConfig {
 	host := os.getenv('SSH2_TEST_HOST')
 	if host == '' {
@@ -219,7 +421,7 @@ fn ssh_test_config() ?ConnectConfig {
 	}
 	return ConnectConfig{
 		host:       host
-		port:       os.getenv('SSH2_TEST_PORT').int()
+		port:       env_test_port()
 		username:   os.getenv('SSH2_TEST_USER')
 		password:   os.getenv('SSH2_TEST_PASS')
 		timeout_ms: 5000
@@ -344,7 +546,7 @@ fn ssh_test_key_config() ?ConnectConfig {
 	}
 	return ConnectConfig{
 		host:         os.getenv('SSH2_TEST_HOST')
-		port:         os.getenv('SSH2_TEST_PORT').int()
+		port:         env_test_port()
 		username:     os.getenv('SSH2_TEST_USER')
 		privkey_file: key
 		timeout_ms:   8000
@@ -630,9 +832,15 @@ fn test_integration_host_key_verification() {
 	// server's host key.
 	client_pub := os.read_file('${base.privkey_file}.pub') or { return }
 	wrong_hosts := os.join_path(tmp_dir, 'vssh2_known_hosts_wrong')
-	os.write_file(wrong_hosts, '[${base.host}]:${base.port} ${client_pub.trim_space()}\n') or {
-		return
+	// OpenSSH omits the port for 22 and brackets `[host]:port` otherwise; use
+	// the same format so the store actually matches the host and reports a
+	// MISMATCH instead of NOT_FOUND.
+	host_field := if base.port == 22 {
+		base.host
+	} else {
+		'[${base.host}]:${base.port}'
 	}
+	os.write_file(wrong_hosts, '${host_field} ${client_pub.trim_space()}\n') or { return }
 	defer {
 		os.rm(wrong_hosts) or {}
 	}
