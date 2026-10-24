@@ -7,6 +7,9 @@ import time
 // Example usage of the vssh2 V wrapper.
 // This demonstrates connecting to an SSH server, authenticating, and running commands.
 //
+// Inside this repository the module resolves as `vssh2`. Consumers installing
+// the published package use: import daniel_le97.vssh2 (qualifier stays `vssh2`).
+//
 // To run this example:
 //   SSH_HOST=example.com SSH_USER=user SSH_PASS=password v run .
 //   SSH_PORT=2222 (optional, defaults to 22)

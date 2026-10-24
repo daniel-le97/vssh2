@@ -58,6 +58,7 @@ fn command_exists(cmd string) bool {
 fn have_pkg_config() bool {
 	return command_exists('pkg-config')
 }
+
 // module_search_path keeps the default V module roots and adds the directory
 // that contains this repository, so `examples/main.v` can `import vssh2` from a
 // plain clone (without `v install` or a ~/.vmodules symlink).

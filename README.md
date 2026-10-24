@@ -38,15 +38,29 @@ Or install manually:
 ## Installation
 
 ```bash
-# Via vpm (install by repository, not by module name):
-v install daniel-le97/vssh2
+# Via VPM (published as daniel-le97.vssh2):
+v install daniel-le97.vssh2
 
-# Or clone locally:
+# Pin a release:
+v install daniel-le97.vssh2@v0.1.1
+
+# Or clone locally (for development):
 git clone https://github.com/daniel-le97/vssh2
 cd vssh2
 v run build.vsh setup   # installs libssh2 if missing
 v run build.vsh check   # fmt + compile + tests
 ```
+
+> **Import path.** VPM installs publisher packages under a normalized path
+> (`~/.vmodules/daniel_le97/vssh2`), so consumers import it as
+>
+> ```v
+> import daniel_le97.vssh2
+> ```
+>
+> The package qualifier is still `vssh2` (`vssh2.connect_to(...)`). Inside a
+> clone of this repository (and in `examples/`) the module resolves as
+> `import vssh2`.
 
 > This repository is a **library module**, so `v build .` does not produce a
 > binary. Use `v run build.vsh build` to compile the example app
@@ -57,7 +71,7 @@ v run build.vsh check   # fmt + compile + tests
 ### Password Authentication
 
 ```v
-import vssh2
+import daniel_le97.vssh2
 
 fn main() {
 	// libssh2 initializes automatically — no init/exit needed
@@ -78,7 +92,7 @@ fn main() {
 ### Public Key Authentication
 
 ```v
-import vssh2
+import daniel_le97.vssh2
 
 fn main() {
 	session := vssh2.connect_to(vssh2.ConnectConfig{
@@ -97,7 +111,7 @@ fn main() {
 ### Manual Step-by-Step Connection
 
 ```v
-import vssh2
+import daniel_le97.vssh2
 import net
 
 fn main() {
@@ -136,7 +150,7 @@ fn main() {
 ### SFTP File Transfer
 
 ```v
-import vssh2
+import daniel_le97.vssh2
 
 fn main() {
 	session := vssh2.connect_to(vssh2.ConnectConfig{
@@ -162,7 +176,7 @@ fn main() {
 ### Interactive Shell
 
 ```v
-import vssh2
+import daniel_le97.vssh2
 
 fn main() {
 	session := vssh2.connect_to(vssh2.ConnectConfig{
@@ -197,7 +211,7 @@ you the running command so you can consume output as it arrives — useful for
 build logs and progress bars:
 
 ```v
-import vssh2
+import daniel_le97.vssh2
 import time
 
 fn main() {
@@ -407,8 +421,8 @@ no `.pub` file was supplied.
 - **`#include` directives**: All C `#include` directives (`<libssh2.h>`,
   `<libssh2_sftp.h>`) are consolidated in `ssh2.v` only — no other file contains
   `#include`. This avoids V compiler errors about duplicate `#include` across module files.
-- **Example file**: `examples/main.v` is `module main` so it does not interfere when the module is used as a dependency. Build it with `v run build.vsh build`; to run it directly use `v run examples/main.v` after installing the module (`v install daniel-le97/vssh2`).
-- **Module name matches the repository**: the directory must be named `vssh2` to match `module vssh2`. `v install daniel-le97/vssh2` handles this automatically; for a local checkout, link it as `ln -sf $(pwd) ~/.vmodules/vssh2`.
+- **Example file**: `examples/main.v` is `module main` so it does not interfere when the module is used as a dependency. Build it from a clone with `v run build.vsh build`.
+- **Package vs directory name**: the module declares `module vssh2`, so a source checkout must live in a directory named `vssh2`. VPM registers the package as `daniel-le97.vssh2` and installs it under `~/.vmodules/daniel_le97/vssh2`, which is why consumers import `daniel_le97.vssh2` (last segment `vssh2`). For a local checkout, link it as `ln -sf $(pwd) ~/.vmodules/vssh2`.
 - **Platforms**: POSIX (Linux/macOS). libssh2 is discovered with `pkg-config`.
 
 ## Project Structure
