@@ -16,7 +16,7 @@ fn C.libssh2_session_get_blocking(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_banner_get(session &C.LIBSSH2_SESSION) &char
 fn C.libssh2_session_banner_set(session &C.LIBSSH2_SESSION, banner &char) int
 fn C.libssh2_session_methods(session &C.LIBSSH2_SESSION, method_type int) &char
-fn C.libssh2_session_hostkey(session &C.LIBSSH2_SESSION, len &usize, typ &int) &char
+fn C.libssh2_session_hostkey(session &C.LIBSSH2_SESSION, len &uint, typ &int) &char
 fn C.libssh2_session_disconnect(session &C.LIBSSH2_SESSION, reason &char) int
 fn C.libssh2_session_block_directions(session &C.LIBSSH2_SESSION) int
 fn C.libssh2_session_get_timeout(session &C.LIBSSH2_SESSION) int
@@ -254,7 +254,7 @@ pub fn (s &Session) hostkey() ([]u8, int, int) {
 	if isnil(s.handle) {
 		return []u8{}, 0, 0
 	}
-	mut key_len := usize(0)
+	mut key_len := uint(0)
 	mut key_type := 0
 	ptr := C.libssh2_session_hostkey(s.handle, &key_len, &key_type)
 	if unsafe { ptr == nil } {

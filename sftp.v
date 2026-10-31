@@ -11,7 +11,7 @@ fn C.libssh2_sftp_shutdown(sftp &C.LIBSSH2_SFTP) int
 fn C.libssh2_sftp_open_ex(sftp &C.LIBSSH2_SFTP, filename &char, filename_len int, flags u32, mode int, open_type int) &C.LIBSSH2_SFTP_HANDLE
 fn C.libssh2_sftp_close_handle(handle &C.LIBSSH2_SFTP_HANDLE) int
 fn C.libssh2_sftp_read(handle &C.LIBSSH2_SFTP_HANDLE, buf voidptr, buflen int) int
-fn C.libssh2_sftp_readdir_ex(handle &C.LIBSSH2_SFTP_HANDLE, buf &char, buflen usize, longentry &char, longentry_maxlen usize, attrs &C.LIBSSH2_SFTP_ATTRIBUTES) int
+fn C.libssh2_sftp_readdir_ex(handle &C.LIBSSH2_SFTP_HANDLE, buf &char, buflen uint, longentry &char, longentry_maxlen uint, attrs &C.LIBSSH2_SFTP_ATTRIBUTES) int
 fn C.libssh2_sftp_write(handle &C.LIBSSH2_SFTP_HANDLE, buf voidptr, buflen int) int
 fn C.libssh2_sftp_fstat_ex(handle &C.LIBSSH2_SFTP_HANDLE, st &C.LIBSSH2_SFTP_ATTRIBUTES, setstat int) int
 fn C.libssh2_sftp_stat_ex(sftp &C.LIBSSH2_SFTP, path &char, path_len int, stat_type int, attrs &C.LIBSSH2_SFTP_ATTRIBUTES) int

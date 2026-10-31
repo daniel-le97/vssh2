@@ -10,9 +10,9 @@ fn C.libssh2_knownhost_init(session &C.LIBSSH2_SESSION) &C.LIBSSH2_KNOWNHOSTS
 fn C.libssh2_knownhost_free(knownhosts &C.LIBSSH2_KNOWNHOSTS)
 fn C.libssh2_knownhost_readfile(knownhosts &C.LIBSSH2_KNOWNHOSTS, filename &char, typ int) int
 fn C.libssh2_knownhost_writefile(knownhosts &C.LIBSSH2_KNOWNHOSTS, filename &char, typ int) int
-fn C.libssh2_knownhost_writeline(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &C.LIBSSH2_KNOWNHOST, buf voidptr, buflen usize, outlen &usize, typ int) int
-fn C.libssh2_knownhost_addc(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &char, salt &char, key &char, keylen usize, comment &char, commentlen usize, typemask int, store voidptr) int
-fn C.libssh2_knownhost_checkp(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &char, port int, key &char, keylen usize, typemask int, knownhost voidptr) int
+fn C.libssh2_knownhost_writeline(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &C.LIBSSH2_KNOWNHOST, buf voidptr, buflen uint, outlen &uint, typ int) int
+fn C.libssh2_knownhost_addc(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &char, salt &char, key &char, keylen uint, comment &char, commentlen uint, typemask int, store voidptr) int
+fn C.libssh2_knownhost_checkp(knownhosts &C.LIBSSH2_KNOWNHOSTS, host &char, port int, key &char, keylen uint, typemask int, knownhost voidptr) int
 
 // HostKeyType identifies the algorithm of a server host key. The values match
 // the LIBSSH2_HOSTKEY_TYPE_* constants returned by `Session.hostkey()`.
